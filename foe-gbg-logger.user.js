@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FoE ПБГ логгер
 // @namespace    foe-gbg-logger
-// @version      1.6
+// @version      1.7
 // @description  Записывает бои, усталость, награды, активность гильдий и изменения протокола на Полях битв гильдий. Сам ничего не нажимает.
 // @match        https://*.forgeofempires.com/game/*
 // @run-at       document-start
@@ -61,6 +61,8 @@
       actions: [],           // действия игрока/гильдии на ПБГ (не get*)
       negotiations: [],      // ответы переговоров
       discoveries: [],       // новые методы/поля протокола
+      guild: { names: {}, snaps: [] }, // снимки таблицы игроков гильдии: {t, p:[[id, побед в боях, переговоров, усталость, место]]}
+      dayResets: [],         // моменты, когда наша усталость сбросилась (так узнаём время смены дня ПБГ)
       unknown: [],           // образцы неразобранных ответов по теме ПБГ
       resources: { first: null, last: null },
       alerts: [],
@@ -222,6 +224,7 @@
       if (rd.activeTrial != null) S.bg.activeTrial = rd.activeTrial;
       const a = rd.attrition;
       if (!a) return null;
+      if (S.attrition && a.level < S.attrition.level && a.level <= 1) { S.dayResets = S.dayResets || []; S.dayResets.push(t); }
       S.attrition = { level: a.level, bonus: a.defendingArmyBonus, neg: a.negotiationMultiplier, t };
       const c = persist.curve[a.level] || (persist.curve[a.level] = { bonus: a.defendingArmyBonus, neg: a.negotiationMultiplier, n: 0 });
       if (c.bonus !== a.defendingArmyBonus || c.neg !== a.negotiationMultiplier) { c.conflict = (c.conflict || 0) + 1; c.lastBonus = a.defendingArmyBonus; c.lastNeg = a.negotiationMultiplier; }
@@ -320,6 +323,8 @@
             setBattleground(rd, t); break;
           case 'GuildBattlegroundService.getProvinces':
             for (const p of (rd || [])) applyProvince(p, t, kind); break;
+          case 'GuildBattlegroundService.getPlayerLeaderboard':
+            addGuildSnap(rd, t); break;
           case 'GuildBattlegroundService.getPlayerParticipant':
             batch.participant = setParticipant(rd, t); break;
           case 'BattlefieldService.startByBattleType': {
@@ -508,6 +513,84 @@
       return out;
     }
 
+    // ── гильдия: снимки таблицы игроков и разбивка по дням ПБГ ──
+    function addGuildSnap(rd, t) {
+      if (!Array.isArray(rd) || !rd.length) return;
+      const g = S.guild || (S.guild = { names: {}, snaps: [] });
+      const p = [];
+      for (const e of rd) {
+        const pl = e && e.player;
+        if (!pl || pl.player_id == null) continue;
+        g.names[pl.player_id] = pl.name;
+        p.push([pl.player_id, e.battlesWon || 0, e.negotiationsWon || 0, e.attrition || 0, e.rank || null]);
+      }
+      if (!p.length) return;
+      const last = g.snaps[g.snaps.length - 1];
+      if (last && JSON.stringify(last.p) === JSON.stringify(p)) { last.t2 = t; return; } // без изменений — только время
+      g.snaps.push({ t, p });
+      if (g.snaps.length > 600) g.snaps.splice(1, g.snaps.length - 600); // первый снимок храним всегда
+    }
+    // время смены дня ПБГ (мс от начала суток UTC): по наблюдённому сбросу усталости, иначе по времени конца раунда
+    function dayTod() {
+      const r = S.dayResets && S.dayResets.length ? S.dayResets[S.dayResets.length - 1] : null;
+      if (r) return Math.round((r % 86400000) / 1800000) * 1800000 % 86400000; // округляем до получаса
+      if (S.bg.endsAt) return (S.bg.endsAt * 1000) % 86400000;
+      return (86400000 - new Date().getTimezoneOffset() * -60000) % 86400000; // полночь по местному
+    }
+    function dayStart(t) { const tod = dayTod(); return Math.floor((t - tod) / 86400000) * 86400000 + tod; }
+    // отчёт: по каждому игроку — всего за поле, по дням ПБГ и усталость
+    function guildReport() {
+      const g = S.guild || { names: {}, snaps: [] };
+      const snaps = g.snaps.slice().sort((a, b) => a.t - b.t);
+      if (!snaps.length) return null;
+      const tEnd = x => x.t2 || x.t;
+      const last = snaps[snaps.length - 1];
+      const nowD = dayStart(serverNow());
+      const firstD = dayStart(snaps[0].t);
+      const days = [];
+      for (let d = firstD; d <= nowD; d += 86400000) days.push(d);
+      const byId = sn => { const m = {}; for (const r of sn.p) m[r[0]] = r; return m; };
+      const maps = snaps.map(byId);
+      const ids = new Set(); for (const sn of snaps) for (const r of sn.p) ids.add(r[0]);
+      // охват каждого дня: от какого снимка до какого считаем.
+      // Начало — последний снимок до смены дня (если он не старше 3 ч), иначе первый снимок внутри дня.
+      const cover = {};
+      for (const d of days) {
+        let ref = -1, firstIn = -1, end = -1;
+        for (let i = 0; i < snaps.length; i++) {
+          if (tEnd(snaps[i]) <= d) ref = i;
+          if (snaps[i].t >= d && snaps[i].t < d + 86400000) { if (firstIn < 0) firstIn = i; end = i; }
+        }
+        let from;
+        if (ref >= 0 && d - tEnd(snaps[ref]) <= 3 * 3600000) from = ref;
+        else if (firstIn >= 0) from = firstIn;
+        else from = ref;
+        const fromT = from < 0 ? null : from === ref ? tEnd(snaps[from]) : snaps[from].t;
+        cover[d] = { from, end, fromT, endT: end >= 0 ? tEnd(snaps[end]) : null, approx: from < 0 || end < 0 || Math.abs(fromT - d) > 1800000 };
+      }
+      const players = [];
+      for (const id of ids) {
+        const cur = maps[maps.length - 1][id];
+        const pl = { id, name: g.names[id] || String(id), rank: cur ? cur[4] : null, b: cur ? cur[1] : 0, n: cur ? cur[2] : 0, left: !cur, days: {} };
+        // усталость: из последнего снимка, если он сегодняшний; иначе она уже сброшена
+        pl.att = cur && tEnd(last) >= nowD ? cur[3] : 0;
+        for (const d of days) {
+          const c = cover[d];
+          if (c.end < 0) continue;
+          const e = maps[c.end][id];
+          if (!e) continue;
+          const single = c.from === c.end;
+          const f = c.from >= 0 && !single ? maps[c.from][id] : null;
+          let attMax = 0;
+          for (let i = 0; i < snaps.length; i++) if (snaps[i].t >= d && snaps[i].t < d + 86400000 && maps[i][id]) attMax = Math.max(attMax, maps[i][id][3]);
+          pl.days[d] = single ? { b: 0, n: 0, att: attMax, approx: true, single: true }
+            : f ? { b: e[1] - f[1], n: e[2] - f[2], att: attMax, approx: c.approx }
+            : { b: e[1], n: e[2], att: attMax, approx: true, joined: true };
+        }
+        players.push(pl);
+      }
+      return { days, cover, players, first: snaps[0].t, last: tEnd(last), count: snaps.length, today: nowD, tod: dayTod(), me: S.session.playerId };
+    }
     function serverNow() { return Date.now() + (S.timeOffset || 0); }
     function neighbours(id) {
       const m = persist.meta.maps[S.bg.mapId];
@@ -541,7 +624,7 @@
     function getCfg() { return cfg; }
     function setCfg(c) { Object.assign(cfg, c); dirty = true; }
 
-    return { S, persist, ingest, setMeta, stats, activitySummary, vpRates, provName, provFull, pName, setHost, load, isDirty, markDirty, getCfg, setCfg, serverNow, attackable, soonOpening };
+    return { S, persist, ingest, setMeta, stats, activitySummary, vpRates, provName, provFull, pName, guildReport, dayStart, setHost, load, isDirty, markDirty, getCfg, setCfg, serverNow, attackable, soonOpening };
   }
 
   if (IS_NODE) { module.exports = { createCore, DEFAULT_CFG }; return; }
@@ -781,6 +864,7 @@
   #gbgL .bd{overflow:auto;padding:6px 8px}
   #gbgL table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;font:inherit;color:inherit}
   #gbgL td,#gbgL th{font:inherit;color:inherit}
+  #gbgL td.l,#gbgL th.l{text-align:left}
   #gbgL .nm{display:inline-block;max-width:120px;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom}
   #gbgL .pn{display:inline-block;max-width:130px;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom}
   #gbgL th,#gbgL td{padding:2px 4px;border-bottom:1px solid #30353c;text-align:right;white-space:nowrap}
@@ -803,7 +887,7 @@
   #gbgL.flash{animation:gbgF 1s 3}
   @keyframes gbgF{50%{border-color:#ff6b6b;box-shadow:0 0 18px #ff6b6b}}`;
 
-  const TABS = [['sum', 'Сводка'], ['map', 'Карта'], ['enemy', 'Враги'], ['att', 'Усталость'], ['rew', 'Награды'], ['fights', 'Бои'], ['new', 'Новое'], ['set', 'Экспорт']];
+  const TABS = [['sum', 'Сводка'], ['map', 'Карта'], ['enemy', 'Враги'], ['guild', 'Гильдия'], ['att', 'Усталость'], ['rew', 'Награды'], ['fights', 'Бои'], ['new', 'Новое'], ['set', 'Экспорт']];
   let tab = lsGet('tab', 'sum');
   let panelOpen = lsGet('open', false);
   let forceShow = false; // Alt+G: показать панель и вне ПБГ (например, для экспорта)
@@ -838,8 +922,10 @@
     root.addEventListener('click', e => {
       const b = e.target.closest('button'); if (!b) return;
       if (b.dataset.t) { tab = b.dataset.t; lsSet('tab', tab); render(true); }
+      if (b.dataset.gm) { gMode = b.dataset.gm; lsSet('gMode', gMode); render(true); }
       if (b.dataset.a) action(b.dataset.a);
     });
+    root.addEventListener('click', e => { const th = e.target.closest && e.target.closest('[data-gs]'); if (th) { gSort = th.dataset.gs; lsSet('gSort', gSort); render(true); } });
     root.addEventListener('pointerdown', () => { pressing = true; }, true);
     W.addEventListener('pointerup', () => { setTimeout(() => { pressing = false; }, 0); }, true);
     // наведение и выбор на схеме: слушаем на корне, он не перерисовывается
@@ -970,8 +1056,11 @@
     if (pressing && !force) return;
     if (!core.isDirty() && !force && tab !== 'map' && tab !== 'enemy') return;
     const keepScroll = body.scrollTop;
-    body.innerHTML = ({ sum: viewSum, map: viewMap, enemy: viewEnemy, att: viewAtt, rew: viewRew, fights: viewFights, new: viewNew, set: viewSet }[tab] || viewSum)();
+    const prevH = root.offsetHeight;
+    body.innerHTML = ({ sum: viewSum, map: viewMap, enemy: viewEnemy, guild: viewGuild, att: viewAtt, rew: viewRew, fights: viewFights, new: viewNew, set: viewSet }[tab] || viewSum)();
     body.scrollTop = keepScroll;
+    // панель выросла — не даём ей уйти за нижний край экрана
+    if (root.offsetHeight !== prevH) { const r = root.getBoundingClientRect(); if (r.bottom > W.innerHeight - 4) root.style.top = Math.max(0, W.innerHeight - r.height - 8) + 'px'; }
   }
 
   function viewSum() {
@@ -1176,6 +1265,53 @@
     return h + '</table>';
   }
 
+  // ── вкладка «Гильдия»: бои и усталость игроков за день и за всё поле ──
+  let gMode = lsGet('gMode', 'today'), gSort = lsGet('gSort', 'b');
+  const dLabel = d => new Date(d).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
+  const hhmm = t => new Date(t).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  function viewGuild() {
+    const R = core.guildReport();
+    const howTo = '<div class="mut">Данные берутся из таблицы игроков гильдии на ПБГ: откройте её в игре — логгер запомнит снимок. Всего за поле считает сервер (точно). Для разбивки по дням логгер вычитает снимки, поэтому открывайте таблицу хотя бы раз в начале и в конце дня ПБГ.</div>';
+    if (!R) return '<h4>Гильдия</h4>' + howTo;
+    const modes = [['today', 'Сегодня'], ['yday', 'Вчера'], ['days', 'По дням'], ['all', 'Всё поле']];
+    let h = `<div class="row">${modes.map(([k, n]) => `<button data-gm="${k}" style="${gMode === k ? 'background:#4a525e' : ''}">${n}</button>`).join('')}<span class="mut">снимков: ${R.count}, последний ${hhmm(R.last)}</span></div>`;
+    const me = R.me;
+    const nameCell = p => `<span class="nm" style="max-width:150px" title="${esc(p.name)}">${p.id === me ? '<b>' : ''}${esc(p.name)}${p.id === me ? '</b>' : ''}</span>${p.left ? ' <span class=mut>(нет в последнем)</span>' : ''}`;
+    const sortBy = (list, key) => list.sort((a, b) => (b[key] || 0) - (a[key] || 0) || a.name.localeCompare(b.name));
+    const th = (k, n) => `<th data-gs="${k}" style="cursor:pointer${gSort === k ? ';color:#fff' : ''}">${n}${gSort === k ? ' ▾' : ''}</th>`;
+    if (gMode === 'today' || gMode === 'yday') {
+      const d = gMode === 'today' ? R.today : R.today - 86400000;
+      const c = R.cover[d];
+      if (!c || c.end < 0) return h + `<div class="mut">За ${gMode === 'today' ? 'сегодня' : 'вчера'} снимков нет.</div>` + howTo;
+      const rows = R.players.filter(p => p.days[d]).map(p => ({ id: p.id, name: p.name, left: p.left, b: p.days[d].b, n: p.days[d].n, att: gMode === 'today' ? p.att : p.days[d].att, tot: p.b + p.n, single: p.days[d].single }));
+      for (const r of rows) r.eff = r.att > 0 ? r.b / r.att : null;
+      sortBy(rows, gSort === 'name' ? 'b' : gSort);
+      const sumB = rows.reduce((s, r) => s + r.b, 0), sumN = rows.reduce((s, r) => s + r.n, 0), active = rows.filter(r => r.b + r.n > 0).length;
+      h += `<div class="mut">День ПБГ с ${dLabel(d)} ${hhmm(d)}. Охват: ${c.fromT ? hhmm(c.fromT) : '—'} → ${hhmm(c.endT)}${c.approx ? ' <span class=warn>(приблизительно: снимка на начало дня нет)</span>' : ''}${c.from === c.end ? ' <span class=warn>— один снимок, бои за день появятся после следующего открытия таблицы</span>' : ''}</div>`;
+      h += `<div class="kpi"><div><small>Боёв гильдии</small><span>${fmt(sumB)}</span></div><div><small>Переговоров</small><span>${fmt(sumN)}</span></div><div><small>Активных</small><span>${active}</span> <span class="mut">из ${rows.length}</span></div></div>`;
+      h += `<table><tr><th>#</th><th class="l">Игрок</th>${th('b', 'Боёв')}${th('n', 'Перег.')}${th('att', gMode === 'today' ? 'Уст. сейчас' : 'Уст. макс')}${th('eff', 'Боёв/уст.')}${th('tot', 'Всего')}</tr>`;
+      rows.forEach((r, i) => { h += `<tr${r.b + r.n === 0 ? ' class="mut"' : ''}><td>${i + 1}</td><td class="l">${nameCell(r)}</td><td>${fmt(r.b)}</td><td>${r.n || ''}</td><td class="${r.att >= core.getCfg().capLevel ? 'warn' : ''}">${r.att || ''}</td><td>${r.eff == null ? '' : fmt(r.eff)}</td><td class="mut">${fmt(r.tot)}</td></tr>`; });
+      return h + `</table><div class="mut">Боёв/уст. — сколько боёв на одну единицу усталости: чем выше, тем «дешевле» по усталости бьёт игрок. Усталость сбрасывается в начале дня ПБГ (${hhmm(R.today)}).</div>`;
+    }
+    if (gMode === 'all') {
+      const rows = R.players.map(p => ({ id: p.id, name: p.name, left: p.left, b: p.b, n: p.n, tot: p.b + p.n, att: p.att }));
+      const total = rows.reduce((s, r) => s + r.tot, 0);
+      sortBy(rows, gSort === 'eff' ? 'b' : gSort);
+      h += `<div class="mut">Всё поле — по данным сервера на ${dLabel(R.last)} ${hhmm(R.last)}.</div><div class="kpi"><div><small>Побед в боях</small><span>${fmt(rows.reduce((s, r) => s + r.b, 0))}</span></div><div><small>Переговоров</small><span>${fmt(rows.reduce((s, r) => s + r.n, 0))}</span></div><div><small>Игроков с боями</small><span>${rows.filter(r => r.tot > 0).length}</span> <span class="mut">из ${rows.length}</span></div></div>`;
+      h += `<table><tr><th>#</th><th class="l">Игрок</th>${th('b', 'Бои')}${th('n', 'Перег.')}${th('tot', 'Всего')}<th>Доля</th>${th('att', 'Уст. сейчас')}</tr>`;
+      rows.forEach((r, i) => { h += `<tr${r.tot === 0 ? ' class="mut"' : ''}><td>${i + 1}</td><td class="l">${nameCell(r)}</td><td>${fmt(r.b)}</td><td>${r.n || ''}</td><td>${fmt(r.tot)}</td><td>${total ? (r.tot / total * 100).toFixed(1) + '%' : ''}</td><td>${r.att || ''}</td></tr>`; });
+      return h + '</table>';
+    }
+    // по дням: последние 7 дней ПБГ
+    const days = R.days.filter(d => R.players.some(p => p.days[d] && !p.days[d].single)).slice(-7);
+    if (!days.length) return h + '<div class="mut">Пока нет ни одного дня с двумя снимками — откройте таблицу игроков ещё раз позже.</div>' + howTo;
+    const rows = R.players.map(p => { const r = { id: p.id, name: p.name, left: p.left, sum: 0 }; days.forEach(d => { const x = p.days[d] && !p.days[d].single ? p.days[d] : null; r[d] = x ? x.b + x.n : null; r.sum += x ? x.b + x.n : 0; }); return r; });
+    rows.sort((a, b) => b.sum - a.sum || a.name.localeCompare(b.name));
+    h += `<div class="mut">Бои + переговоры по дням ПБГ (день начинается в ${hhmm(R.today)}). ≈ — для дня нет снимка на его начало.</div><table><tr><th>Игрок</th>${days.map(d => `<th>${dLabel(d)}${R.cover[d] && R.cover[d].approx ? '≈' : ''}</th>`).join('')}<th>Σ</th></tr>`;
+    for (const r of rows) h += `<tr${r.sum === 0 ? ' class="mut"' : ''}><td>${nameCell(r)}</td>${days.map(d => `<td>${r[d] == null ? '<span class=mut>·</span>' : r[d] ? fmt(r[d]) : '<span class=mut>0</span>'}</td>`).join('')}<td><b>${fmt(r.sum)}</b></td></tr>`;
+    return h + '</table>';
+  }
+
   function viewAtt() {
     const c = persist.curve;
     const lv = Object.keys(c).map(Number).sort((a, b) => a - b);
@@ -1247,7 +1383,7 @@
     return `<h4>Экспорт</h4><div class="row">
       <button data-a="json">Всё в JSON</button><button data-a="raw">Сырой лог</button>
       <button data-a="csvF">Бои CSV</button><button data-a="csvR">Награды CSV</button>
-      <button data-a="csvA">Активность CSV</button><button data-a="csvC">Кривая усталости CSV</button></div>
+      <button data-a="csvA">Активность CSV</button><button data-a="csvC">Кривая усталости CSV</button><button data-a="csvG">Гильдия по дням CSV</button></div>
       <div class="mut">Сырой лог в том же формате, что и прошлые записи (items: t/kind/req/data), только без тяжёлых частей. Сейчас: ${S.raw.length} записей, ${S.activity.length} событий активности.</div>
       <h4>Настройки</h4>
       <div class="row">${chk('onlyGbg', 'Значок только на ПБГ')}${chk('rawLog', 'Писать сырой лог')}${chk('alertSound', 'Звук тревоги')}${chk('alertNotify', 'Уведомления')}</div>
@@ -1276,6 +1412,13 @@
     if (a === 'csvF') download(`gbg-fights-${host}-${stamp()}.csv`, csv(S.fights.map(f => Object.assign({}, f, { name: core.provName(f.province), nameFull: core.provFull(f.province), start: new Date(f.tStart).toISOString(), waves: f.waves.length, hpLost: f.waves.reduce((s, w) => s + (w.ownHpLost || 0), 0), points: f.waves.reduce((s, w) => s + (w.points || 0), 0), rewards: f.rewards.map(r => r.subType + ':' + r.amount).join(' '), enemy: f.waves.map(w => w.enemy.join(',')).join(' | ') })), ['id', 'start', 'type', 'result', 'province', 'name', 'nameFull', 'ownerName', 'attChance', 'attBefore', 'attAfter', 'attGain', 'bonusBefore', 'totalWaves', 'auto', 'trial', 'era', 'progBefore', 'progMax', 'hpLost', 'points', 'rewards', 'template', 'enemy']), 'text/csv');
     if (a === 'csvR') download(`gbg-rewards-${host}-${stamp()}.csv`, csv(S.rewards.map(r => Object.assign({}, r, { time: new Date(r.t).toISOString() })), ['time', 'ctx', 'type', 'subType', 'amount', 'name', 'fightId', 'assembled', 'required']), 'text/csv');
     if (a === 'csvA') download(`gbg-activity-${host}-${stamp()}.csv`, csv(S.activity.map(x => Object.assign({}, x, { time: new Date(x.t).toISOString(), province: core.provName(x.id), provinceFull: core.provFull(x.id), guild: core.pName(x.pid), ownerName: core.pName(x.owner) })), ['time', 'id', 'province', 'provinceFull', 'guild', 'delta', 'p', 'max', 'ownerName', 'src']), 'text/csv');
+    if (a === 'csvG') {
+      const R = core.guildReport();
+      if (!R) { alert('Нет снимков таблицы игроков: откройте её в игре.'); return; }
+      const rows = [];
+      for (const p of R.players) for (const d of R.days) { const x = p.days[d]; if (x) rows.push({ day: new Date(d).toISOString().slice(0, 16), player: p.name, playerId: p.id, battles: x.b, negotiations: x.n, attritionMax: x.att, approx: x.approx ? 1 : 0, totalBattles: p.b, totalNegotiations: p.n }); }
+      download(`gbg-guild-${host}-${stamp()}.csv`, csv(rows, ['day', 'player', 'playerId', 'battles', 'negotiations', 'attritionMax', 'approx', 'totalBattles', 'totalNegotiations']), 'text/csv');
+    }
     if (a === 'csvC') download(`gbg-attrition-curve.csv`, csv(Object.entries(persist.curve).map(([l, x]) => Object.assign({ level: +l }, x)).sort((x, y) => x.level - y.level), ['level', 'bonus', 'neg', 'n', 'conflict']), 'text/csv');
     if (a === 'new') {
       if (!confirm('Очистить текущую сессию? Кривая усталости и схема сохранятся. Сначала лучше сделать экспорт.')) return;
