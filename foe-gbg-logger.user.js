@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FoE ПБГ логгер
 // @namespace    foe-gbg-logger
-// @version      1.3
+// @version      1.4
 // @description  Записывает бои, усталость, награды, активность гильдий и изменения протокола на Полях битв гильдий. Сам ничего не нажимает.
 // @match        https://*.forgeofempires.com/game/*
 // @run-at       document-start
@@ -455,24 +455,39 @@
       return out;
     }
 
-    function activitySummary(windowMin) {
-      const since = now() - (windowMin || cfg.activityWindowMin) * 60000;
+    // Темп ударов: по последней минуте (быстро реагирует на наплыв), если там мало данных — по всему окну.
+    // Делим на время «до сейчас», поэтому если удары прекратились, темп сам снижается, а время до взятия растёт.
+    function activitySummary(windowMin, at) {
+      const nowT = at || now();
+      const since = nowT - (windowMin || cfg.activityWindowMin) * 60000;
+      const recentSince = nowT - 60000;
       const m = {};
       for (let i = S.activity.length - 1; i >= 0; i--) {
         const a = S.activity[i];
         if (a.t < since) break;
         const k = a.id + ':' + a.pid;
-        const x = m[k] || (m[k] = { id: a.id, name: provName(a.id), pid: a.pid, who: pName(a.pid), hits: 0, first: a.t, last: a.t, p: a.p, max: a.max, owner: a.owner });
+        const x = m[k] || (m[k] = { id: a.id, name: provName(a.id), pid: a.pid, who: pName(a.pid), hits: 0, recent: 0, rFirst: null, first: a.t, last: a.t, p: a.p, max: a.max, owner: a.owner });
         x.hits += a.delta; x.first = Math.min(x.first, a.t);
+        if (a.t >= recentSince) { x.recent += a.delta; x.rFirst = x.rFirst == null ? a.t : Math.min(x.rFirst, a.t); }
       }
       const list = Object.values(m).map(x => {
-        const mins = Math.max((x.last - x.first) / 60000, 0.25);
-        x.rate = x.hits / mins;
-        x.eta = x.max && x.rate > 0 ? (x.max - x.p) / x.rate : null;
+        // актуальное состояние провинции важнее последнего события
+        const prov = S.bg.provinces[x.id];
+        const cur = prov && prov.prog[x.pid];
+        if (prov) x.owner = prov.owner;
+        if (cur) { x.p = cur.p; x.max = cur.max; }
+        x.done = !!prov && (prov.owner === x.pid || !cur);
+        let perSec;
+        if (x.recent >= 3) perSec = x.recent / Math.max((nowT - x.rFirst) / 1000, 5);
+        else perSec = x.hits / Math.max((nowT - x.first) / 1000, 30);
+        x.rate = perSec * 60;
+        x.etaSec = x.done || !x.max || perSec <= 0 ? null : Math.max(0, (x.max - x.p) / perSec);
+        x.eta = x.etaSec == null ? null : x.etaSec / 60;
+        x.idle = (nowT - x.last) / 1000;
         x.mine = x.owner === S.bg.myPid; x.own = x.pid === S.bg.myPid;
         return x;
       });
-      return list.sort((a, b) => b.rate - a.rate);
+      return list.sort((a, b) => (a.done - b.done) || b.rate - a.rate);
     }
 
     function vpRates() {
@@ -1001,12 +1016,26 @@
     return h;
   }
 
+  // до минуты — «42 с», до часа — «4:17», дальше — «1ч 12м»
+  function etaFmt(x) {
+    if (x.done) return { txt: x.owner === x.pid ? 'взята' : 'сброс', cls: x.owner === x.pid ? (x.own ? 'good' : 'bad') : 'mut' };
+    if (x.etaSec == null) return { txt: '—', cls: '' };
+    const r = Math.ceil(x.etaSec);
+    const danger = x.mine && !x.own;
+    if (r < 60) return { txt: r + ' с', cls: (danger ? 'bad ' : 'warn ') + 'blink' };
+    if (r < 3600) return { txt: Math.floor(r / 60) + ':' + String(r % 60).padStart(2, '0'), cls: danger ? 'bad' : '' };
+    return { txt: Math.floor(r / 3600) + 'ч ' + Math.floor(r % 3600 / 60) + 'м', cls: '' };
+  }
   function viewEnemy() {
     const S = core.S;
     const list = core.activitySummary();
     let h = `<h4>Активность за ${core.getCfg().activityWindowMin} мин</h4><table><tr><th>Провинция</th><th>Кто бьёт</th><th>Удар.</th><th>/мин</th><th>Прогр.</th><th>До взятия</th></tr>`;
-    for (const x of list) h += `<tr><td>${x.mine ? '🛡 ' : ''}${pn(x.id)}</td><td>${who(x.pid)}</td><td>${x.hits}</td><td>${fmt(x.rate)}</td><td>${x.p}/${x.max}</td><td class="${x.mine && !x.own ? 'bad' : ''}">${x.eta == null ? '—' : fmt(x.eta) + ' мин'}</td></tr>`;
-    h += `</table>`;
+    for (const x of list) {
+      const e = etaFmt(x);
+      const row = x.mine && !x.own && !x.done && x.etaSec != null && x.etaSec < 60 ? 'hot' : '';
+      h += `<tr class="${row}"><td>${x.mine ? '🛡 ' : ''}${pn(x.id)}</td><td>${who(x.pid)}</td><td>${x.hits}</td><td class="${x.idle > 20 && !x.done ? 'mut' : ''}">${x.done ? '—' : fmt(x.rate)}</td><td>${x.p}/${x.max}</td><td class="${e.cls}">${e.txt}</td></tr>`;
+    }
+    h += `</table><div class="mut">Темп — по последней минуте; серый — ударов не было больше 20 с.</div>`;
     if (!list.length) h += '<div class="mut">Пока тихо (данные идут через websocket, пока открыта карта).</div>';
     h += `<h4>Захваты</h4><table><tr><th>Время</th><th>Провинция</th><th>Было</th><th>Стало</th></tr>`;
     for (const c of S.captures.slice(-30).reverse()) h += `<tr><td>${hm(c.t)}</td><td>${esc(c.name)}</td><td>${who(c.from)}</td><td>${who(c.to)}</td></tr>`;
