@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FoE ПБГ логгер
 // @namespace    foe-gbg-logger
-// @version      1.5
+// @version      1.6
 // @description  Записывает бои, усталость, награды, активность гильдий и изменения протокола на Полях битв гильдий. Сам ничего не нажимает.
 // @match        https://*.forgeofempires.com/game/*
 // @run-at       document-start
@@ -80,13 +80,20 @@
     const key = r => (r && r.requestClass) + '.' + (r && r.requestMethod);
     function pushCap(arr, item, cap) { arr.push(item); if (arr.length > cap) arr.splice(0, arr.length - cap); }
 
-    function provName(id) {
+    // полное название из метаданных: «D3: Xiwait»
+    function provFull(id) {
       const m = persist.meta.maps[S.bg.mapId];
       if (m && m.provinces) {
         const p = m.provinces.find(x => (x.id || 0) === id);
         if (p) return p.name;
       }
       return '#' + id;
+    }
+    // как подписано на игровой карте: код и первая буква названия — «D3: X»
+    function provName(id) {
+      const f = provFull(id);
+      const g = /^([A-Z0-9]+):\s*(\S)/.exec(f);
+      return g ? g[1] + ': ' + g[2].toUpperCase() : f;
     }
     function pName(pid) {
       const p = S.bg.participants[pid];
@@ -534,7 +541,7 @@
     function getCfg() { return cfg; }
     function setCfg(c) { Object.assign(cfg, c); dirty = true; }
 
-    return { S, persist, ingest, setMeta, stats, activitySummary, vpRates, provName, pName, setHost, load, isDirty, markDirty, getCfg, setCfg, serverNow, attackable, soonOpening };
+    return { S, persist, ingest, setMeta, stats, activitySummary, vpRates, provName, provFull, pName, setHost, load, isDirty, markDirty, getCfg, setCfg, serverNow, attackable, soonOpening };
   }
 
   if (IS_NODE) { module.exports = { createCore, DEFAULT_CFG }; return; }
@@ -753,6 +760,7 @@
   #gbgL .mm path.def{stroke:#6ec3ff;stroke-width:1.1;stroke-dasharray:none}
   #gbgL .mm path.sel{stroke:#fff;stroke-width:1.6;stroke-dasharray:none}
   #gbgL .mm text{pointer-events:none;font:700 5px system-ui,Arial,sans-serif;fill:#fff;paint-order:stroke;stroke:#000;stroke-width:1.2px;text-anchor:middle;dominant-baseline:central}
+  #gbgL .mm text.lt{font-weight:600;font-size:4.6px;fill:#e8e6df;stroke-width:.9px}
   #gbgL .mm text.sec{font-size:8px;fill:#cfd4db;stroke-width:1.5px}
   #gbgL .mm .bar{display:flex;gap:4px;align-self:stretch;justify-content:space-between;align-items:center}
   #gbgL .mm .info{min-height:30px;align-self:stretch;margin-top:3px;color:#cfd4db}
@@ -811,7 +819,7 @@
     return (persist.meta.colours && persist.meta.colours[p.colour]) || ({ red: '#aa0401', green: '#54bb11', yellow: '#ffe360', teal: '#18efef', orange: '#df9700', blue: '#0549e6', purple: '#8d1ace', pink: '#d435cf' }[p.colour]) || '#777';
   }
   const who = pid => `<span class="dot" style="background:${colourOf(pid)}"></span><span class="nm" title="${esc(core.pName(pid))}">${esc(core.pName(pid))}</span>`;
-  const pn = id => `<span class="pn" title="${esc(core.provName(id))}">${esc(core.provName(id))}</span>`;
+  const pn = id => `<span class="pn" title="${esc(core.provFull(id))}">${esc(core.provName(id))}</span>`;
 
   const ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="#f0c94a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 17.5 3 6V3h3l11.5 11.5"/><path d="m13 19 6-6"/><path d="m16 16 4 4"/><path d="m19 21 2-2"/><path d="M14.5 6.5 18 3h3v3l-3.5 3.5"/><path d="m5 14 4 4"/><path d="m7 17-3 3"/><path d="m3 19 2 2"/></svg>';
 
@@ -989,7 +997,7 @@
       h += `</table>`;
     }
     h += `<h4>По провинциям (сессия)</h4><table><tr><th>Провинция</th><th>Боёв</th><th>Шанс</th><th>Получено</th><th>Факт</th><th>Награды</th></tr>`;
-    for (const p of Object.values(st.byProv)) h += `<tr><td>${esc(p.name)}</td><td>${p.n}</td><td>${p.chance == null ? '—' : p.chance + '%'}</td><td>+${p.gain}</td><td>${p.gainKnown ? pct(p.gain / p.gainKnown) : '—'}</td><td>${pct(p.rew / p.n)}</td></tr>`;
+    for (const p of Object.values(st.byProv)) h += `<tr><td>${pn(p.id)}</td><td>${p.n}</td><td>${p.chance == null ? '—' : p.chance + '%'}</td><td>+${p.gain}</td><td>${p.gainKnown ? pct(p.gain / p.gainKnown) : '—'}</td><td>${pct(p.rew / p.n)}</td></tr>`;
     h += `</table>`;
     const wv = Object.entries(st.waves).map(([k, v]) => `${k} волн: ${v}`).join(' · ');
     h += `<h4>Прочее</h4><div class="mut">${wv || '—'} · свои потери HP: ${fmt(st.hpLost)} · очки PvP: ${fmt(st.points)}${S.bg.activeTrial != null ? ' · испытание: ' + S.bg.activeTrial : ''}${S.bg.league && S.bg.league.beast ? ' · режим Beast' : ''}</div>`;
@@ -1055,7 +1063,7 @@
     if (!p) return '';
     const t = timer(p.lockedUntil), atk = core.attackable(p), my = S.bg.myPid;
     const mp = p.prog[my];
-    const parts = [`<b>${esc(core.provName(id))}</b>`, p.spawn ? 'точка появления ' + who(p.owner) : who(p.owner)];
+    const parts = [`<b>${esc(core.provName(id))}</b> <span class="mut">${esc((core.provFull(id).split(':')[1] || '').trim())}</span>`, p.spawn ? 'точка появления ' + who(p.owner) : who(p.owner)];
     if (t.txt) parts.push(t.rest > 0 ? `откроется <span class="${t.cls}">${t.txt}</span>` : '<span class=good>открыта</span>');
     if (p.owner !== my && !p.spawn) parts.push(atk === true ? '<span class=good>⚔ можно атаковать</span>' : atk === false ? '<span class=mut>не граничит с нами</span>' : '');
     if (p.att != null && p.owner !== my) parts.push(`шанс усталости ${p.att}%`);
@@ -1085,8 +1093,10 @@
       if (mmSel === c.id) cls = 'sel';
       paths += `<path data-pid="${c.id}" class="${cls}" d="${mmPath(c)}" fill="${col}" fill-opacity="${locked ? 0.32 : p && p.spawn ? 0.55 : 0.9}"/>`;
       const [cx, cy] = c.full ? [0, 0] : mmPt((c.rIn + c.rOut) / 2, (c.a0 + c.a1) / 2);
+      const short = core.provName(c.id);
       if (locked && rest < 300 && !mine) labels += `<text x="${cx.toFixed(1)}" y="${cy.toFixed(1)}">${timer(p.lockedUntil).txt}</text>`;
-      else if (c.ring === 0 || (p && p.spawn)) labels += `<text x="${cx.toFixed(1)}" y="${cy.toFixed(1)}">${p && p.spawn ? '⌂' : esc(c.code)}</text>`;
+      else if (p && p.spawn) labels += `<text x="${cx.toFixed(1)}" y="${cy.toFixed(1)}">⌂</text>`;
+      else labels += `<text class="${c.ring === 0 ? '' : 'lt'}" x="${cx.toFixed(1)}" y="${cy.toFixed(1)}">${esc(c.ring === 0 ? short.replace(' ', '') : short.split(': ')[1] || '')}</text>`;
     }
     // буквы секторов снаружи
     const secs = {};
@@ -1131,7 +1141,7 @@
     const mine = provs.filter(p => p.owner === my);
     const attacked = mine.filter(p => Object.keys(p.prog).length);
     h += `<h4>Наши провинции под атакой (${attacked.length} из ${mine.length})</h4><table><tr><th>Провинция</th><th>Кто</th><th>Прогресс</th><th>Замок</th></tr>`;
-    for (const p of attacked) for (const [pid, x] of Object.entries(p.prog)) h += `<tr><td>${esc(core.provName(p.id))}</td><td>${who(pid)}</td><td class="${x.p / x.max > 0.7 ? 'bad' : ''}">${x.p}/${x.max}</td><td>${left(p.lockedUntil)}</td></tr>`;
+    for (const p of attacked) for (const [pid, x] of Object.entries(p.prog)) h += `<tr><td>${pn(p.id)}</td><td>${who(pid)}</td><td class="${x.p / x.max > 0.7 ? 'bad' : ''}">${x.p}/${x.max}</td><td>${left(p.lockedUntil)}</td></tr>`;
     h += `</table>`;
     const sig = S.bg.signals[my];
     if (sig && sig.length) h += `<div class="mut">Метки гильдии: ${sig.map(s => esc(core.provName(s.id)) + ' (' + esc(s.s) + ')').join(', ')}</div>`;
@@ -1160,9 +1170,9 @@
     h += `</table><div class="mut">Темп — по последней минуте; серый — ударов не было больше 20 с.</div>`;
     if (!list.length) h += '<div class="mut">Пока тихо (данные идут через websocket, пока открыта карта).</div>';
     h += `<h4>Захваты</h4><table><tr><th>Время</th><th>Провинция</th><th>Было</th><th>Стало</th></tr>`;
-    for (const c of S.captures.slice(-30).reverse()) h += `<tr><td>${hm(c.t)}</td><td>${esc(c.name)}</td><td>${who(c.from)}</td><td>${who(c.to)}</td></tr>`;
+    for (const c of S.captures.slice(-30).reverse()) h += `<tr><td>${hm(c.t)}</td><td>${pn(c.id)}</td><td>${who(c.from)}</td><td>${who(c.to)}</td></tr>`;
     h += `</table><h4>Тревоги</h4><table><tr><th>Время</th><th>Наша провинция</th><th>Кто</th><th>Прогр.</th></tr>`;
-    for (const a of S.alerts.slice(-30).reverse()) h += `<tr><td>${hm(a.t)}</td><td>${esc(a.name)}</td><td>${who(a.pid)}</td><td>${a.p}/${a.max}</td></tr>`;
+    for (const a of S.alerts.slice(-30).reverse()) h += `<tr><td>${hm(a.t)}</td><td>${pn(a.id)}</td><td>${who(a.pid)}</td><td>${a.p}/${a.max}</td></tr>`;
     return h + '</table>';
   }
 
@@ -1206,7 +1216,7 @@
     for (const f of S.fights.slice(-80).reverse()) {
       const hp = f.waves.reduce((s, w) => s + (w.ownHpLost || 0), 0);
       const rw = f.rewards.map(r => (COIN[r.subType] || r.name) + ' ' + r.amount).join(', ');
-      h += `<tr><td>${f.id}</td><td>${hm(f.tStart)}</td><td>${esc(f.name)}</td><td class="${f.result === 'loss' ? 'bad' : ''}">${f.type === 'battle' ? (f.auto ? 'авто' : 'бой') : 'перег.'}${f.result === 'loss' ? ' ✗' : ''}</td><td>${f.totalWaves || '—'}</td><td>${f.attBefore ?? '—'}${f.attGain ? '<span class=warn>+' + f.attGain + '</span>' : f.attGain === 0 ? '<span class=good>+0</span>' : ''}</td><td>${hp}</td><td>${esc(rw || '—')}</td></tr>`;
+      h += `<tr><td>${f.id}</td><td>${hm(f.tStart)}</td><td>${pn(f.province)}</td><td class="${f.result === 'loss' ? 'bad' : ''}">${f.type === 'battle' ? (f.auto ? 'авто' : 'бой') : 'перег.'}${f.result === 'loss' ? ' ✗' : ''}</td><td>${f.totalWaves || '—'}</td><td>${f.attBefore ?? '—'}${f.attGain ? '<span class=warn>+' + f.attGain + '</span>' : f.attGain === 0 ? '<span class=good>+0</span>' : ''}</td><td>${hp}</td><td>${esc(rw || '—')}</td></tr>`;
     }
     h += '</table>';
     const prev = Object.entries(S.previews).slice(-5);
@@ -1263,9 +1273,9 @@
     if (a === 'close') { forceShow = false; openPanel(false); return; }
     if (a === 'json') { const o = Object.assign({}, S, { raw: undefined, curve: persist.curve, meta: persist.meta, stats: core.stats() }); download(`gbg-log-${host}-${stamp()}.json`, JSON.stringify(o)); }
     if (a === 'raw') download(`foe-capture-${host}-${stamp()}.json`, JSON.stringify({ host: location.host, exported: new Date().toISOString(), items: [{ t: new Date().toISOString(), kind: 'meta:guild_battleground_maps', data: Object.values(persist.meta.maps) }].concat(S.raw) }));
-    if (a === 'csvF') download(`gbg-fights-${host}-${stamp()}.csv`, csv(S.fights.map(f => Object.assign({}, f, { start: new Date(f.tStart).toISOString(), waves: f.waves.length, hpLost: f.waves.reduce((s, w) => s + (w.ownHpLost || 0), 0), points: f.waves.reduce((s, w) => s + (w.points || 0), 0), rewards: f.rewards.map(r => r.subType + ':' + r.amount).join(' '), enemy: f.waves.map(w => w.enemy.join(',')).join(' | ') })), ['id', 'start', 'type', 'result', 'province', 'name', 'ownerName', 'attChance', 'attBefore', 'attAfter', 'attGain', 'bonusBefore', 'totalWaves', 'auto', 'trial', 'era', 'progBefore', 'progMax', 'hpLost', 'points', 'rewards', 'template', 'enemy']), 'text/csv');
+    if (a === 'csvF') download(`gbg-fights-${host}-${stamp()}.csv`, csv(S.fights.map(f => Object.assign({}, f, { name: core.provName(f.province), nameFull: core.provFull(f.province), start: new Date(f.tStart).toISOString(), waves: f.waves.length, hpLost: f.waves.reduce((s, w) => s + (w.ownHpLost || 0), 0), points: f.waves.reduce((s, w) => s + (w.points || 0), 0), rewards: f.rewards.map(r => r.subType + ':' + r.amount).join(' '), enemy: f.waves.map(w => w.enemy.join(',')).join(' | ') })), ['id', 'start', 'type', 'result', 'province', 'name', 'nameFull', 'ownerName', 'attChance', 'attBefore', 'attAfter', 'attGain', 'bonusBefore', 'totalWaves', 'auto', 'trial', 'era', 'progBefore', 'progMax', 'hpLost', 'points', 'rewards', 'template', 'enemy']), 'text/csv');
     if (a === 'csvR') download(`gbg-rewards-${host}-${stamp()}.csv`, csv(S.rewards.map(r => Object.assign({}, r, { time: new Date(r.t).toISOString() })), ['time', 'ctx', 'type', 'subType', 'amount', 'name', 'fightId', 'assembled', 'required']), 'text/csv');
-    if (a === 'csvA') download(`gbg-activity-${host}-${stamp()}.csv`, csv(S.activity.map(x => Object.assign({}, x, { time: new Date(x.t).toISOString(), province: core.provName(x.id), guild: core.pName(x.pid), ownerName: core.pName(x.owner) })), ['time', 'id', 'province', 'guild', 'delta', 'p', 'max', 'ownerName', 'src']), 'text/csv');
+    if (a === 'csvA') download(`gbg-activity-${host}-${stamp()}.csv`, csv(S.activity.map(x => Object.assign({}, x, { time: new Date(x.t).toISOString(), province: core.provName(x.id), provinceFull: core.provFull(x.id), guild: core.pName(x.pid), ownerName: core.pName(x.owner) })), ['time', 'id', 'province', 'provinceFull', 'guild', 'delta', 'p', 'max', 'ownerName', 'src']), 'text/csv');
     if (a === 'csvC') download(`gbg-attrition-curve.csv`, csv(Object.entries(persist.curve).map(([l, x]) => Object.assign({ level: +l }, x)).sort((x, y) => x.level - y.level), ['level', 'bonus', 'neg', 'n', 'conflict']), 'text/csv');
     if (a === 'new') {
       if (!confirm('Очистить текущую сессию? Кривая усталости и схема сохранятся. Сначала лучше сделать экспорт.')) return;
