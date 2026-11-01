@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FoE ПБГ логгер
 // @namespace    foe-gbg-logger
-// @version      1.0
+// @version      1.1
 // @description  Записывает бои, усталость, награды, активность гильдий и изменения протокола на Полях битв гильдий. Сам ничего не нажимает.
 // @match        https://*.forgeofempires.com/game/*
 // @run-at       document-start
@@ -26,6 +26,7 @@
     alertMinProgress: 0,   // тревога, только если прогресс врага >= N% от максимума
     alertCooldownSec: 60,  // не чаще одного раза в N сек на провинцию
     activityWindowMin: 5,  // окно для расчёта темпа ударов
+    onlyGbg: true,         // значок и панель видны только на Полях битв
   };
 
   // Классы, ответы которых участвуют в поиске новых полей
@@ -523,7 +524,31 @@
         }
       }
     }
+    trackLocation(reqs);
     core.ingest(kind, reqs, resps, Date.now());
+  }
+
+  // ── где сейчас игрок: на ПБГ или нет ──
+  // Игра сама шлёт LogService.logPerformanceMetrics с полем module ("BG" на Полях битв, "City" в городе и т.д.)
+  // при входе в раздел и примерно раз в 30 с. Плюс явные признаки входа (открытие карты, бой ПБГ) и выхода.
+  const LEAVE_RE = /^(CityMapService\.getCityMap|OtherPlayerService\.visitPlayer|GuildExpeditionService\.getOverview|PVPArenaService\.getOverview|CampaignService\.start)$/;
+  let onGbg = false;
+  function trackLocation(reqs) {
+    for (const q of (Array.isArray(reqs) ? reqs : [])) {
+      if (!q || !q.requestClass) continue;
+      const k = q.requestClass + '.' + q.requestMethod;
+      const d0 = (q.requestData || [])[0];
+      if (k === 'LogService.logPerformanceMetrics' && d0 && d0.module) setOnGbg(d0.module === 'BG');
+      else if (k === 'GuildBattlegroundService.getBattleground' || k === 'GuildBattlegroundStateService.getState') setOnGbg(true);
+      else if (k === 'BattlefieldService.startByBattleType' && d0 && d0.type === 'battleground') setOnGbg(true);
+      else if (LEAVE_RE.test(k)) setOnGbg(false);
+    }
+  }
+  function setOnGbg(v) {
+    if (onGbg === v) return;
+    onGbg = v;
+    if (!v) forceShow = false;
+    ui.applyVis && ui.applyVis();
   }
   const metaFetched = {};
   function fetchMeta(id, url) {
@@ -633,9 +658,17 @@
   const coinName = k => COIN[k] || k;
 
   const CSS = `
-  #gbgL{position:fixed;right:8px;bottom:8px;z-index:2147483647;width:470px;max-height:72vh;display:flex;flex-direction:column;font:12px/1.35 system-ui,Segoe UI,Arial,sans-serif;color:#e8e6df;background:rgba(24,26,30,.96);border:1px solid #3a3f47;border-radius:8px;box-shadow:0 6px 24px rgba(0,0,0,.5)}
-  #gbgL.min{width:auto;max-height:none}
-  #gbgL .hd{display:flex;align-items:center;gap:6px;padding:6px 8px;border-bottom:1px solid #3a3f47;cursor:move;user-select:none}
+  #gbgL{position:fixed;z-index:2147483646;width:470px;max-height:72vh;display:flex;flex-direction:column;font:12px/1.35 system-ui,Segoe UI,Arial,sans-serif;color:#e8e6df;background:rgba(24,26,30,.96);border:1px solid #3a3f47;border-radius:8px;box-shadow:0 6px 24px rgba(0,0,0,.5)}
+  #gbgI{position:fixed;z-index:2147483647;width:46px;height:46px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle at 35% 30%,#3b4250,#1b1e23);border:2px solid #c9a227;box-shadow:0 3px 12px rgba(0,0,0,.55);cursor:grab;user-select:none;touch-action:none}
+  #gbgI:hover{border-color:#f0c94a}
+  #gbgI.drag{cursor:grabbing}
+  #gbgI svg{width:26px;height:26px;pointer-events:none}
+  #gbgI .bdg{position:absolute;right:-6px;bottom:-5px;min-width:18px;height:18px;padding:0 4px;box-sizing:border-box;border-radius:9px;background:#2d3239;border:1px solid #555d68;color:#e8e6df;font:700 11px/16px system-ui,Segoe UI,Arial,sans-serif;text-align:center}
+  #gbgI .bdg.bad{background:#b3261e;border-color:#ff6b6b;color:#fff}
+  #gbgI .bdg:empty{display:none}
+  #gbgI.flash{animation:gbgFI .5s 6}
+  @keyframes gbgFI{50%{border-color:#ff6b6b;box-shadow:0 0 18px 4px #ff6b6b}}
+  #gbgL .hd{display:flex;align-items:center;gap:6px;padding:6px 8px;border-bottom:1px solid #3a3f47;cursor:move;user-select:none;touch-action:none}
   #gbgL .hd b{flex:1;font-size:12px}
   #gbgL .hd .st{font-variant-numeric:tabular-nums;color:#a9b0bb}
   #gbgL button{font:inherit;color:#e8e6df;background:#2d3239;border:1px solid #444b55;border-radius:5px;padding:2px 7px;cursor:pointer}
@@ -670,8 +703,9 @@
 
   const TABS = [['sum', 'Сводка'], ['map', 'Карта'], ['enemy', 'Враги'], ['att', 'Усталость'], ['rew', 'Награды'], ['fights', 'Бои'], ['new', 'Новое'], ['set', 'Экспорт']];
   let tab = lsGet('tab', 'sum');
-  let minimized = lsGet('min', false);
-  let root, body, statusEl;
+  let panelOpen = lsGet('open', false);
+  let forceShow = false; // Alt+G: показать панель и вне ПБГ (например, для экспорта)
+  let root, body, statusEl, icon, badge;
 
   function colourOf(pid) {
     const p = core.S.bg.participants[pid];
@@ -682,11 +716,17 @@
   const who = pid => `<span class="dot" style="background:${colourOf(pid)}"></span><span class="nm" title="${esc(core.pName(pid))}">${esc(core.pName(pid))}</span>`;
   const pn = id => `<span class="pn" title="${esc(core.provName(id))}">${esc(core.provName(id))}</span>`;
 
+  const ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="#f0c94a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 17.5 3 6V3h3l11.5 11.5"/><path d="m13 19 6-6"/><path d="m16 16 4 4"/><path d="m19 21 2-2"/><path d="M14.5 6.5 18 3h3v3l-3.5 3.5"/><path d="m5 14 4 4"/><path d="m7 17-3 3"/><path d="m3 19 2 2"/></svg>';
+
   function build() {
     const st = document.createElement('style'); st.textContent = CSS; document.head.appendChild(st);
     root = document.createElement('div'); root.id = 'gbgL';
-    root.innerHTML = `<div class="hd"><b>ПБГ логгер</b><span class="st"></span><button data-a="min">${minimized ? '▢' : '—'}</button></div><div class="tabs"></div><div class="bd"></div>`;
+    root.innerHTML = `<div class="hd"><b>ПБГ логгер</b><span class="st"></span><button data-a="close" title="Свернуть в значок">—</button></div><div class="tabs"></div><div class="bd"></div>`;
     document.body.appendChild(root);
+    icon = document.createElement('div'); icon.id = 'gbgI'; icon.title = 'ПБГ логгер';
+    icon.innerHTML = ICON_SVG + '<span class="bdg"></span>';
+    document.body.appendChild(icon);
+    badge = icon.querySelector('.bdg');
     statusEl = root.querySelector('.st'); body = root.querySelector('.bd');
     const tabs = root.querySelector('.tabs');
     tabs.innerHTML = TABS.map(([k, n]) => `<button data-t="${k}">${n}</button>`).join('');
@@ -700,25 +740,87 @@
       const v = el.type === 'checkbox' ? el.checked : +el.value;
       core.setCfg({ [el.dataset.c]: v }); lsSet('cfg', core.getCfg());
       if (el.dataset.c === 'alertNotify' && v && W.Notification && Notification.permission === 'default') Notification.requestPermission();
+      if (el.dataset.c === 'onlyGbg') applyVis();
     });
-    drag(root, root.querySelector('.hd'));
-    const pos = lsGet('pos', null);
-    if (pos) { root.style.left = pos.x + 'px'; root.style.top = pos.y + 'px'; root.style.right = 'auto'; root.style.bottom = 'auto'; }
-    applyMin();
+    // позиции: значок и панель запоминаются отдельно
+    const ip = lsGet('iconPos', null);
+    place(icon, ip ? ip.x : W.innerWidth - 70, ip ? ip.y : W.innerHeight - 140);
+    draggable(icon, icon, 'iconPos', () => openPanel(true));
+    draggable(root, root.querySelector('.hd'), null, null);
+    W.addEventListener('resize', () => { clampEl(icon); clampEl(root); });
+    W.addEventListener('keydown', e => {
+      if (e.altKey && (e.code === 'KeyG')) {
+        e.preventDefault();
+        if (root.style.display !== 'none') { forceShow = false; openPanel(false); }
+        else { forceShow = true; openPanel(true); }
+      }
+    }, true);
+    ui.applyVis = applyVis;
+    applyVis();
     setInterval(() => render(false), 1000);
     render(true);
   }
-  function applyMin() {
-    root.classList.toggle('min', minimized);
-    root.querySelector('.tabs').style.display = minimized ? 'none' : '';
-    body.style.display = minimized ? 'none' : '';
-    root.querySelector('[data-a=min]').textContent = minimized ? '▢' : '—';
+  function visible() { return forceShow || onGbg || !core.getCfg().onlyGbg; }
+  function applyVis() {
+    if (!root) return;
+    const v = visible();
+    const wasOpen = root.style.display !== 'none' && root.style.display !== '';
+    const ir = lsGet('iconPos', null) || { x: parseFloat(icon.style.left) || 0, y: parseFloat(icon.style.top) || 0 };
+    icon.style.display = v && !panelOpen ? 'flex' : 'none';
+    root.style.display = v && panelOpen ? 'flex' : 'none';
+    if (v && panelOpen) { render(true); if (!wasOpen) anchorToIcon(ir); clampEl(root); }
+    if (v && !panelOpen) clampEl(icon);
   }
-  function drag(el, handle) {
-    let sx, sy, ox, oy, on = false;
-    handle.addEventListener('mousedown', e => { if (e.target.closest('button')) return; on = true; const r = el.getBoundingClientRect(); sx = e.clientX; sy = e.clientY; ox = r.left; oy = r.top; e.preventDefault(); });
-    W.addEventListener('mousemove', e => { if (!on) return; el.style.left = Math.max(0, ox + e.clientX - sx) + 'px'; el.style.top = Math.max(0, oy + e.clientY - sy) + 'px'; el.style.right = 'auto'; el.style.bottom = 'auto'; });
-    W.addEventListener('mouseup', () => { if (!on) return; on = false; const r = el.getBoundingClientRect(); lsSet('pos', { x: r.left, y: r.top }); });
+  function openPanel(open) {
+    panelOpen = open; lsSet('open', open);
+    applyVis();
+  }
+  // панель открывается рядом со значком: справа от него, а если не помещается — слева
+  function anchorToIcon(ir) {
+    const w = Math.min(470, W.innerWidth - 16);
+    const h = Math.min(root.offsetHeight || W.innerHeight * 0.72, W.innerHeight * 0.72);
+    const x = ir.x + 54 + w <= W.innerWidth ? ir.x + 54 : Math.max(0, ir.x - w - 8);
+    const y = Math.max(8, Math.min(ir.y - h / 2 + 23, W.innerHeight - h - 8));
+    place(root, x, y);
+  }
+  function place(el, x, y) {
+    el.style.left = Math.round(x) + 'px'; el.style.top = Math.round(y) + 'px';
+    el.style.right = 'auto'; el.style.bottom = 'auto';
+    clampEl(el);
+  }
+  function clampEl(el) {
+    if (!el || el.style.display === 'none' || !el.style.left) return;
+    const r = el.getBoundingClientRect();
+    const x = Math.min(Math.max(0, r.left), Math.max(0, W.innerWidth - Math.min(r.width, W.innerWidth)));
+    const y = Math.min(Math.max(0, r.top), Math.max(0, W.innerHeight - Math.min(r.height, 60)));
+    el.style.left = Math.round(x) + 'px'; el.style.top = Math.round(y) + 'px';
+  }
+  // перетаскивание мышью и пальцем; короткий клик без сдвига = onClick
+  function draggable(el, handle, posKey, onClick) {
+    let sx, sy, ox, oy, on = false, moved = false;
+    handle.addEventListener('pointerdown', e => {
+      if (e.button !== 0 || e.target.closest('button')) return;
+      on = true; moved = false;
+      const r = el.getBoundingClientRect(); sx = e.clientX; sy = e.clientY; ox = r.left; oy = r.top;
+      try { handle.setPointerCapture(e.pointerId); } catch (x) { /* */ }
+      e.preventDefault(); e.stopPropagation();
+    });
+    handle.addEventListener('pointermove', e => {
+      if (!on) return;
+      const dx = e.clientX - sx, dy = e.clientY - sy;
+      if (!moved && Math.abs(dx) + Math.abs(dy) < 5) return;
+      moved = true; el.classList.add('drag');
+      place(el, ox + dx, oy + dy);
+    });
+    const end = e => {
+      if (!on) return; on = false; el.classList.remove('drag');
+      try { handle.releasePointerCapture(e.pointerId); } catch (x) { /* */ }
+      if (moved && posKey) { const r = el.getBoundingClientRect(); lsSet(posKey, { x: r.left, y: r.top }); }
+      else if (onClick) onClick();
+      e.stopPropagation();
+    };
+    handle.addEventListener('pointerup', end);
+    handle.addEventListener('pointercancel', end);
   }
 
   function render(force) {
@@ -727,8 +829,11 @@
     const a = S.attrition;
     const warn = a && a.level >= core.getCfg().warnLevel;
     statusEl.innerHTML = `${S.fights.length} боёв · усталость <span class="${warn ? 'bad' : ''}">${a ? a.level : '—'}</span>`;
+    badge.textContent = a ? a.level : (S.fights.length || '');
+    badge.classList.toggle('bad', !!warn);
+    icon.title = `ПБГ логгер — ${S.fights.length} боёв, усталость ${a ? a.level : '—'}. Клик — открыть, тянуть — переместить.`;
     root.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.t === tab));
-    if (minimized) return;
+    if (root.style.display === 'none') return;
     if (!core.isDirty() && !force && tab !== 'map' && tab !== 'enemy') return;
     const keepScroll = body.scrollTop;
     body.innerHTML = ({ sum: viewSum, map: viewMap, enemy: viewEnemy, att: viewAtt, rew: viewRew, fights: viewFights, new: viewNew, set: viewSet }[tab] || viewSum)();
@@ -875,10 +980,11 @@
       <button data-a="csvA">Активность CSV</button><button data-a="csvC">Кривая усталости CSV</button></div>
       <div class="mut">Сырой лог в том же формате, что и прошлые записи (items: t/kind/req/data), только без тяжёлых частей. Сейчас: ${S.raw.length} записей, ${S.activity.length} событий активности.</div>
       <h4>Настройки</h4>
-      <div class="row">${chk('rawLog', 'Писать сырой лог')}${chk('alertSound', 'Звук тревоги')}${chk('alertNotify', 'Уведомления')}</div>
+      <div class="row">${chk('onlyGbg', 'Значок только на ПБГ')}${chk('rawLog', 'Писать сырой лог')}${chk('alertSound', 'Звук тревоги')}${chk('alertNotify', 'Уведомления')}</div>
       <div class="row">${num('warnLevel', 'Предупреждать с уровня')}${num('alertMinProgress', 'Тревога от %')}${num('alertCooldownSec', 'Пауза тревоги, с')}${num('activityWindowMin', 'Окно активности, мин')}</div>
       <h4>Сессия</h4><div class="row"><button data-a="new">Новая сессия (очистить)</button><button data-a="test">Проверить тревогу</button></div>
-      <div class="mut">Пачек: ${S.counters.batches} (xhr ${S.counters.xhr || 0}, ws ${S.counters.ws || 0}). Игрок: ${esc(S.session.playerName || '—')}. Метаданные карт: ${Object.keys(persist.meta.maps).length ? 'есть' : 'нет (названия провинций будут как #id)'}. Консоль: <code>__foeGbgLogger.S</code></div>`;
+      <div class="mut">Пачек: ${S.counters.batches} (xhr ${S.counters.xhr || 0}, ws ${S.counters.ws || 0}). Игрок: ${esc(S.session.playerName || '—')}. Метаданные карт: ${Object.keys(persist.meta.maps).length ? 'есть' : 'нет (названия провинций будут как #id)'}. Консоль: <code>__foeGbgLogger.S</code></div>
+      <div class="mut">Alt+G — открыть или закрыть панель где угодно (например, чтобы сделать экспорт уже в городе). Сейчас: ${onGbg ? 'на ПБГ' : 'не на ПБГ'}.</div>`;
   }
 
   function download(name, text, type) {
@@ -893,7 +999,7 @@
 
   function action(a) {
     const S = core.S, host = (location.host.split('.')[0]);
-    if (a === 'min') { minimized = !minimized; lsSet('min', minimized); applyMin(); render(true); return; }
+    if (a === 'close') { forceShow = false; openPanel(false); return; }
     if (a === 'json') { const o = Object.assign({}, S, { raw: undefined, curve: persist.curve, meta: persist.meta, stats: core.stats() }); download(`gbg-log-${host}-${stamp()}.json`, JSON.stringify(o)); }
     if (a === 'raw') download(`foe-capture-${host}-${stamp()}.json`, JSON.stringify({ host: location.host, exported: new Date().toISOString(), items: [{ t: new Date().toISOString(), kind: 'meta:guild_battleground_maps', data: Object.values(persist.meta.maps) }].concat(S.raw) }));
     if (a === 'csvF') download(`gbg-fights-${host}-${stamp()}.csv`, csv(S.fights.map(f => Object.assign({}, f, { start: new Date(f.tStart).toISOString(), waves: f.waves.length, hpLost: f.waves.reduce((s, w) => s + (w.ownHpLost || 0), 0), points: f.waves.reduce((s, w) => s + (w.points || 0), 0), rewards: f.rewards.map(r => r.subType + ':' + r.amount).join(' '), enemy: f.waves.map(w => w.enemy.join(',')).join(' | ') })), ['id', 'start', 'type', 'result', 'province', 'name', 'ownerName', 'attChance', 'attBefore', 'attAfter', 'attGain', 'bonusBefore', 'totalWaves', 'auto', 'trial', 'era', 'progBefore', 'progMax', 'hpLost', 'points', 'rewards', 'template', 'enemy']), 'text/csv');
@@ -919,7 +1025,7 @@
     const c = core.getCfg();
     if (c.alertSound) beep();
     if (c.alertNotify && W.Notification && Notification.permission === 'granted') try { new Notification('ПБГ: бьют нашу провинцию', { body: `${a.name}: ${a.who} ${a.p}/${a.max}` }); } catch (e) { /* */ }
-    if (root) { root.classList.remove('flash'); void root.offsetWidth; root.classList.add('flash'); }
+    for (const el of [root, icon]) if (el) { el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); }
   };
   ui.capture = () => core.markDirty();
   ui.fight = () => core.markDirty();
