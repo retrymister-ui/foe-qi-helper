@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FoE ПБГ логгер
 // @namespace    foe-gbg-logger
-// @version      1.1
+// @version      1.2
 // @description  Записывает бои, усталость, награды, активность гильдий и изменения протокола на Полях битв гильдий. Сам ничего не нажимает.
 // @match        https://*.forgeofempires.com/game/*
 // @run-at       document-start
@@ -550,6 +550,16 @@
     if (!v) forceShow = false;
     ui.applyVis && ui.applyVis();
   }
+  // игра шлёт тело запроса бинарным буфером (Uint8Array/ArrayBuffer), а не строкой
+  const TD = new TextDecoder();
+  function bodyToText(b) {
+    try {
+      if (typeof b === 'string') return b;
+      if (b instanceof ArrayBuffer) return TD.decode(new Uint8Array(b));
+      if (ArrayBuffer.isView(b)) return TD.decode(new Uint8Array(b.buffer, b.byteOffset, b.byteLength));
+    } catch (e) { /* не текст */ }
+    return null;
+  }
   const metaFetched = {};
   function fetchMeta(id, url) {
     const kind = (id.match(META_RE) || [])[1];
@@ -564,7 +574,7 @@
   W.XMLHttpRequest.prototype.send = function (body) {
     const url = this.__gbgUrl || '';
     if (/\/game\/json/.test(url)) {
-      const bodyText = typeof body === 'string' ? body : null;
+      const bodyText = bodyToText(body); // декодируем сразу: буфер игра может переиспользовать
       this.addEventListener('load', () => safe(() => {
         const t = this.responseType;
         const resp = (t === '' || t === 'text') ? this.responseText : (t === 'json' ? this.response : null);
@@ -587,7 +597,7 @@
     const url = typeof input === 'string' ? input : (input && input.url) || '';
     const p = FO.apply(this, arguments);
     if (/\/game\/json/.test(url)) {
-      const body = init && typeof init.body === 'string' ? init.body : null;
+      const body = init ? bodyToText(init.body) : null;
       p.then(r => r.clone().text()).then(txt => safe(() => handleGameJson(body, txt, 'xhr'))).catch(() => {});
     }
     return p;

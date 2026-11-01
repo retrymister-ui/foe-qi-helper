@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FoE ПБГ логгер
 // @namespace    foe-gbg-logger
-// @version      1.1
+// @version      1.2
 // @description  Записывает бои, усталость, награды, активность гильдий и изменения протокола на Полях битв гильдий. Сам ничего не нажимает.
 // @match        https://*.forgeofempires.com/game/*
 // @run-at       document-start
