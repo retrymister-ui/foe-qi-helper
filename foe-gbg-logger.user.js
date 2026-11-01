@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FoE ПБГ логгер
 // @namespace    foe-gbg-logger
-// @version      1.4
+// @version      1.5
 // @description  Записывает бои, усталость, награды, активность гильдий и изменения протокола на Полях битв гильдий. Сам ничего не нажимает.
 // @match        https://*.forgeofempires.com/game/*
 // @run-at       document-start
@@ -743,6 +743,21 @@
   #gbgL .blink{animation:gbgB2 1s steps(2) infinite;font-weight:700}
   @keyframes gbgB2{50%{opacity:.35}}
   #gbgL tr.hot td{background:rgba(255,107,107,.12)}
+  #gbgL .mm{display:flex;flex-direction:column;align-items:center;margin:2px 0 6px}
+  #gbgL .mm svg{width:100%;max-width:330px;height:auto;display:block}
+  #gbgL .mm path{stroke:#15171a;stroke-width:.4;cursor:pointer}
+  #gbgL .mm path.atk{stroke:#fff;stroke-width:.7;stroke-dasharray:1.6 1.2}
+  #gbgL .mm path.soon{stroke:#ffb454;stroke-width:1.1;stroke-dasharray:none}
+  #gbgL .mm path.near{stroke:#ffb454;stroke-width:1.8;stroke-dasharray:none}
+  #gbgL .mm path.hot{stroke:#ff4d4d;stroke-width:2.2;stroke-dasharray:none;animation:gbgB2 1s steps(2) infinite}
+  #gbgL .mm path.def{stroke:#6ec3ff;stroke-width:1.1;stroke-dasharray:none}
+  #gbgL .mm path.sel{stroke:#fff;stroke-width:1.6;stroke-dasharray:none}
+  #gbgL .mm text{pointer-events:none;font:700 5px system-ui,Arial,sans-serif;fill:#fff;paint-order:stroke;stroke:#000;stroke-width:1.2px;text-anchor:middle;dominant-baseline:central}
+  #gbgL .mm text.sec{font-size:8px;fill:#cfd4db;stroke-width:1.5px}
+  #gbgL .mm .bar{display:flex;gap:4px;align-self:stretch;justify-content:space-between;align-items:center}
+  #gbgL .mm .info{min-height:30px;align-self:stretch;margin-top:3px;color:#cfd4db}
+  #gbgL .mm .lg{align-self:stretch;color:#8b929c;font-size:11px}
+  #gbgL .mm .lg i{display:inline-block;width:12px;height:8px;margin:0 3px 0 6px;vertical-align:middle;border-radius:2px}
   #gbgL tr.near td{background:rgba(255,180,84,.08)}
   #gbgI .bdg:empty{display:none}
   #gbgI.flash{animation:gbgFI .5s 6}
@@ -785,6 +800,9 @@
   let panelOpen = lsGet('open', false);
   let forceShow = false; // Alt+G: показать панель и вне ПБГ (например, для экспорта)
   let root, body, statusEl, icon, badge;
+  let mmCfg = lsGet('mm', { rot: 0, mirror: false, hide: false });
+  let mmHover = null, mmSel = null;
+  let pressing = false; // пока кнопка мыши зажата над панелью, не перерисовываем — иначе клик теряется
 
   function colourOf(pid) {
     const p = core.S.bg.participants[pid];
@@ -814,6 +832,12 @@
       if (b.dataset.t) { tab = b.dataset.t; lsSet('tab', tab); render(true); }
       if (b.dataset.a) action(b.dataset.a);
     });
+    root.addEventListener('pointerdown', () => { pressing = true; }, true);
+    W.addEventListener('pointerup', () => { setTimeout(() => { pressing = false; }, 0); }, true);
+    // наведение и выбор на схеме: слушаем на корне, он не перерисовывается
+    root.addEventListener('mousemove', e => { const c = e.target.closest && e.target.closest('[data-pid]'); const v = c ? +c.dataset.pid : null; if (v !== mmHover) { mmHover = v; if (tab === 'map') render(true); } });
+    root.addEventListener('mouseleave', () => { if (mmHover != null) { mmHover = null; if (tab === 'map') render(true); } });
+    root.addEventListener('click', e => { const c = e.target.closest && e.target.closest('[data-pid]'); if (c) { mmSel = mmSel === +c.dataset.pid ? null : +c.dataset.pid; render(true); } });
     root.addEventListener('change', e => {
       const el = e.target; if (!el.dataset.c) return;
       const v = el.type === 'checkbox' ? el.checked : +el.value;
@@ -935,6 +959,7 @@
     icon.title = `ПБГ логгер — ${S.fights.length} боёв, усталость ${a ? a.level : '—'}${cap ? ' (потолок)' : ''}` + (nextOpen ? `. Ближайшая к открытию: ${core.provName(nextOpen.p.id)} через ${timer(nextOpen.p.lockedUntil).txt}` : '') + '. Клик — открыть, тянуть — переместить.';
     root.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.t === tab));
     if (root.style.display === 'none') return;
+    if (pressing && !force) return;
     if (!core.isDirty() && !force && tab !== 'map' && tab !== 'enemy') return;
     const keepScroll = body.scrollTop;
     body.innerHTML = ({ sum: viewSum, map: viewMap, enemy: viewEnemy, att: viewAtt, rew: viewRew, fights: viewFights, new: viewNew, set: viewSet }[tab] || viewSum)();
@@ -977,14 +1002,111 @@
     return h;
   }
 
+  // ── схема карты: кольца (цифра в коде провинции) и сектора, номера провинций идут по кругу ──
+  const mmCache = {};
+  function mmLayout(mapId) {
+    if (mmCache[mapId]) return mmCache[mapId];
+    const m = persist.meta.maps[mapId];
+    if (!m || !m.provinces) return null;
+    const rings = {};
+    for (const p of m.provinces) {
+      const g = /^([A-Z])(\d)/.exec(p.name || '');
+      if (!g) return null;
+      (rings[+g[2]] = rings[+g[2]] || []).push(p);
+    }
+    const nums = Object.keys(rings).map(Number).sort((a, b) => a - b);
+    const K = nums.length, R = 92;
+    const single = rings[nums[0]].length === 1;
+    const inner = single ? 0 : R * 0.16;
+    const w = (R - inner) / K;
+    const cells = {}, centers = {};
+    const angDist = (a, b) => { const d = Math.abs(((a - b) % 360 + 540) % 360 - 180); return d; };
+    nums.forEach((rn, ri) => {
+      const list = rings[rn].slice().sort((a, b) => a.id - b.id);
+      const n = list.length, span = 360 / n;
+      const rIn = single && ri === 0 ? 0 : inner + w * ri, rOut = inner + w * (ri + 1);
+      // поворот кольца подбираем так, чтобы провинции стояли напротив своих соседей из внутреннего кольца
+      let best = 0, bestScore = Infinity;
+      if (ri > 0) for (const k of [0, -0.5, 0.5, -0.25, 0.25, -1, 1]) {
+        let sc = 0;
+        list.forEach((p, i) => { const c = (i + 0.5 + k) * span; for (const nb of (p.connections || [])) if (centers[nb] != null && cells[nb] && cells[nb].ring === ri - 1) sc += angDist(c, centers[nb]); });
+        if (sc < bestScore - 1e-6) { bestScore = sc; best = k; }
+      }
+      list.forEach((p, i) => {
+        const a0 = (i + best) * span, a1 = a0 + span;
+        cells[p.id] = { id: p.id, ring: ri, a0, a1, rIn, rOut, code: (p.name || '').split(':')[0], sector: (p.name || '')[0], full: n === 1 };
+        centers[p.id] = (a0 + a1) / 2;
+      });
+    });
+    return (mmCache[mapId] = { cells, R });
+  }
+  function mmPt(r, a) { const t = (a * (mmCfg.mirror ? -1 : 1) + mmCfg.rot * 90) * Math.PI / 180; return [r * Math.sin(t), -r * Math.cos(t)]; }
+  function mmPath(c) {
+    const f = n => n.toFixed(2);
+    if (c.full) return `M${f(-c.rOut)},0A${f(c.rOut)},${f(c.rOut)} 0 1,0 ${f(c.rOut)},0A${f(c.rOut)},${f(c.rOut)} 0 1,0 ${f(-c.rOut)},0Z`;
+    const large = c.a1 - c.a0 > 180 ? 1 : 0, sw = mmCfg.mirror ? 0 : 1;
+    const [x0, y0] = mmPt(c.rOut, c.a0), [x1, y1] = mmPt(c.rOut, c.a1);
+    if (!c.rIn) return `M0,0L${f(x0)},${f(y0)}A${f(c.rOut)},${f(c.rOut)} 0 ${large},${sw} ${f(x1)},${f(y1)}Z`;
+    const [x2, y2] = mmPt(c.rIn, c.a1), [x3, y3] = mmPt(c.rIn, c.a0);
+    return `M${f(x0)},${f(y0)}A${f(c.rOut)},${f(c.rOut)} 0 ${large},${sw} ${f(x1)},${f(y1)}L${f(x2)},${f(y2)}A${f(c.rIn)},${f(c.rIn)} 0 ${large},${1 - sw} ${f(x3)},${f(y3)}Z`;
+  }
+  function mmInfo(id) {
+    const S = core.S, p = S.bg.provinces[id];
+    if (!p) return '';
+    const t = timer(p.lockedUntil), atk = core.attackable(p), my = S.bg.myPid;
+    const mp = p.prog[my];
+    const parts = [`<b>${esc(core.provName(id))}</b>`, p.spawn ? 'точка появления ' + who(p.owner) : who(p.owner)];
+    if (t.txt) parts.push(t.rest > 0 ? `откроется <span class="${t.cls}">${t.txt}</span>` : '<span class=good>открыта</span>');
+    if (p.owner !== my && !p.spawn) parts.push(atk === true ? '<span class=good>⚔ можно атаковать</span>' : atk === false ? '<span class=mut>не граничит с нами</span>' : '');
+    if (p.att != null && p.owner !== my) parts.push(`шанс усталости ${p.att}%`);
+    if (mp) parts.push(`наш прогресс ${mp.p}/${mp.max}`);
+    const others = Object.entries(p.prog).filter(([pid]) => +pid !== my);
+    if (others.length) parts.push(others.map(([pid, x]) => `${who(pid)} ${x.p}/${x.max}`).join(', '));
+    parts.push(`слоты ${p.slotsUsed}/${p.slotsTotal}`);
+    return parts.filter(Boolean).join(' · ');
+  }
+  function viewMiniMap() {
+    const S = core.S, lay = mmLayout(S.bg.mapId);
+    const bar = `<div class="bar"><b>Схема карты</b><span><button data-a="mmRot" title="Повернуть на 90°">⟳</button> <button data-a="mmMir" title="Отразить">⇋</button> <button data-a="mmHide">${mmCfg.hide ? 'показать' : 'скрыть'}</button></span></div>`;
+    if (mmCfg.hide) return `<div class="mm">${bar}</div>`;
+    if (!lay) return `<div class="mm">${bar}<div class="mut">Нет метаданных карты — схема появится после перезагрузки игры с включённым логгером.</div></div>`;
+    const my = S.bg.myPid, cfg = core.getCfg(), nowS = core.serverNow() / 1000;
+    let paths = '', labels = '';
+    for (const c of Object.values(lay.cells)) {
+      const p = S.bg.provinces[c.id];
+      const col = p ? colourOf(p.owner) : '#555';
+      const rest = p && p.lockedUntil ? p.lockedUntil - nowS : null;
+      const locked = rest != null && rest > 0;
+      const mine = p && p.owner === my;
+      const atk = p && !mine ? core.attackable(p) : false;
+      let cls = '';
+      if (locked && rest <= cfg.soonWindowMin * 60) cls = mine ? 'def' : atk !== false ? (rest < 60 ? 'hot' : rest < 300 ? 'near' : 'soon') : 'soon';
+      else if (!locked && atk === true) cls = 'atk';
+      if (mmSel === c.id) cls = 'sel';
+      paths += `<path data-pid="${c.id}" class="${cls}" d="${mmPath(c)}" fill="${col}" fill-opacity="${locked ? 0.32 : p && p.spawn ? 0.55 : 0.9}"/>`;
+      const [cx, cy] = c.full ? [0, 0] : mmPt((c.rIn + c.rOut) / 2, (c.a0 + c.a1) / 2);
+      if (locked && rest < 300 && !mine) labels += `<text x="${cx.toFixed(1)}" y="${cy.toFixed(1)}">${timer(p.lockedUntil).txt}</text>`;
+      else if (c.ring === 0 || (p && p.spawn)) labels += `<text x="${cx.toFixed(1)}" y="${cy.toFixed(1)}">${p && p.spawn ? '⌂' : esc(c.code)}</text>`;
+    }
+    // буквы секторов снаружи
+    const secs = {};
+    for (const c of Object.values(lay.cells)) if (c.ring === Math.max(...Object.values(lay.cells).map(x => x.ring))) (secs[c.sector] = secs[c.sector] || []).push((c.a0 + c.a1) / 2);
+    for (const [k, a] of Object.entries(secs)) { const mid = a.reduce((s, x) => s + x, 0) / a.length; const [x, y] = mmPt(lay.R + 5, mid); labels += `<text class="sec" x="${x.toFixed(1)}" y="${y.toFixed(1)}">${esc(k)}</text>`; }
+    const info = mmInfo(mmSel != null ? mmSel : mmHover) || '<span class="mut">Наведите на провинцию, клик — закрепить.</span>';
+    const guilds = Object.entries(S.bg.participants).map(([pid, x]) => `<i style="background:${colourOf(pid)}"></i>${esc(x.name)}`).join('');
+    return `<div class="mm">${bar}<svg viewBox="-102 -102 204 204">${paths}${labels}</svg><div class="info">${info}</div>
+      <div class="lg">${guilds}<br>тусклая — закрыта · пунктир — открыта, граничит с нами · оранжевая рамка — откроется скоро · красная мигает — меньше минуты · голубая — наша скоро откроется</div></div>`;
+  }
+
   function viewMap() {
     const S = core.S, my = S.bg.myPid;
     const provs = Object.values(S.bg.provinces);
     if (!provs.length) return '<div class="mut">Откройте карту ПБГ — данные придут с getBattleground.</div>';
     const cfg = core.getCfg(), cap = capped();
+    let h0 = viewMiniMap();
     // скоро откроются
     const soon = core.soonOpening(cfg.soonWindowMin);
-    let h = `<h4>Скоро откроются (${cfg.soonWindowMin} мин)</h4>`;
+    let h = h0 + `<h4>Скоро откроются (${cfg.soonWindowMin} мин)</h4>`;
     if (soon.length) {
       h += `<table><tr><th>Провинция</th><th>Владелец</th><th>Откроется</th><th>Рядом</th><th>Шанс</th></tr>`;
       for (const x of soon) {
@@ -1151,6 +1273,9 @@
     }
     if (a === 'test') ui.alert({ name: 'Тестовая провинция', who: 'Тест', p: 50, max: 100 });
     if (a === 'testT') chime(3);
+    if (a === 'mmRot') { mmCfg.rot = (mmCfg.rot + 1) % 4; lsSet('mm', mmCfg); render(true); }
+    if (a === 'mmMir') { mmCfg.mirror = !mmCfg.mirror; lsSet('mm', mmCfg); render(true); }
+    if (a === 'mmHide') { mmCfg.hide = !mmCfg.hide; lsSet('mm', mmCfg); render(true); }
   }
 
   // тревоги
