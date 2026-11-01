@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FoE ПБГ логгер
 // @namespace    foe-gbg-logger
-// @version      1.2
+// @version      1.3
 // @description  Записывает бои, усталость, награды, активность гильдий и изменения протокола на Полях битв гильдий. Сам ничего не нажимает.
 // @match        https://*.forgeofempires.com/game/*
 // @run-at       document-start
@@ -27,6 +27,9 @@
     alertCooldownSec: 60,  // не чаще одного раза в N сек на провинцию
     activityWindowMin: 5,  // окно для расчёта темпа ударов
     onlyGbg: true,         // значок и панель видны только на Полях битв
+    capLevel: 150,         // с этого уровня усталости сложность больше не растёт
+    timerSound: true,      // звук за 60 и 10 с до открытия соседней чужой провинции
+    soonWindowMin: 30,     // окно списка «скоро откроются», мин
   };
 
   // Классы, ответы которых участвуют в поиске новых полей
@@ -298,6 +301,12 @@
         const rd = r.responseData;
         try { trackSchema(r, t); } catch (e) { /* не мешаем игре */ }
         switch (k) {
+          case 'TimeService.updateTime':
+            if (rd && rd.time) {
+              const off = rd.time * 1000 + 500 - t; // сервер отдаёт целые секунды
+              S.timeOffset = S.timeOffset == null ? off : Math.round(S.timeOffset * 0.8 + off * 0.2);
+            }
+            break;
           case 'GuildBattlegroundStateService.getState':
             S.state = rd; break;
           case 'GuildBattlegroundService.getBattleground':
@@ -477,6 +486,32 @@
       return out;
     }
 
+    function serverNow() { return Date.now() + (S.timeOffset || 0); }
+    function neighbours(id) {
+      const m = persist.meta.maps[S.bg.mapId];
+      const p = m && m.provinces && m.provinces.find(x => x.id === id);
+      return p && p.connections ? p.connections : null;
+    }
+    // можно ли напасть: чужая, не точка появления и граничит с нашей провинцией (null — карта неизвестна)
+    function attackable(p) {
+      if (!p || p.owner === S.bg.myPid || p.spawn) return false;
+      const nb = neighbours(p.id);
+      if (!nb) return null;
+      return nb.some(id => S.bg.provinces[id] && S.bg.provinces[id].owner === S.bg.myPid);
+    }
+    // провинции, которые откроются в ближайшие windowMin минут (и только что открывшиеся — 30 с)
+    function soonOpening(windowMin) {
+      const now = serverNow() / 1000;
+      const out = [];
+      for (const p of Object.values(S.bg.provinces)) {
+        if (!p.lockedUntil || p.spawn) continue;
+        const rest = p.lockedUntil - now;
+        if (rest < -30 || rest > windowMin * 60) continue;
+        const mine = p.owner === S.bg.myPid;
+        out.push({ p, rest, mine, atk: mine ? false : attackable(p) });
+      }
+      return out.sort((a, b) => a.rest - b.rest);
+    }
     function setHost(h) { S.session.host = h; }
     function load(saved) { if (saved && saved.v === 1) { Object.assign(S, saved); fightSeq = S.fights.length ? S.fights[S.fights.length - 1].id : 0; } }
     function isDirty() { const d = dirty; dirty = false; return d; }
@@ -484,7 +519,7 @@
     function getCfg() { return cfg; }
     function setCfg(c) { Object.assign(cfg, c); dirty = true; }
 
-    return { S, persist, ingest, setMeta, stats, activitySummary, vpRates, provName, pName, setHost, load, isDirty, markDirty, getCfg, setCfg };
+    return { S, persist, ingest, setMeta, stats, activitySummary, vpRates, provName, pName, setHost, load, isDirty, markDirty, getCfg, setCfg, serverNow, attackable, soonOpening };
   }
 
   if (IS_NODE) { module.exports = { createCore, DEFAULT_CFG }; return; }
@@ -663,7 +698,18 @@
   const fmt = n => n == null ? '—' : (typeof n === 'number' ? n.toLocaleString('ru-RU', { maximumFractionDigits: 1 }) : n);
   const pct = x => x == null ? '—' : (x * 100).toFixed(0) + '%';
   const hm = ts => { const d = new Date(ts); return d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' }); };
-  const left = sec => { if (!sec) return ''; const s = sec - Date.now() / 1000; if (s <= 0) return 'открыта'; const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60); return (h ? h + 'ч ' : '') + m + 'м'; };
+  // до 1 минуты — посекундно «0:42», до 5 минут — «4:17», дальше — «1ч 12м»
+  function timer(sec) {
+    if (!sec) return { txt: '', cls: '', rest: null };
+    const rest = sec - core.serverNow() / 1000;
+    if (rest <= 0) return { txt: 'открыта', cls: 'good', rest };
+    const r = Math.ceil(rest);
+    if (r < 300) { const m = Math.floor(r / 60), ss = String(r % 60).padStart(2, '0'); return { txt: m + ':' + ss, cls: r < 60 ? 'bad blink' : 'warn', rest }; }
+    const h = Math.floor(r / 3600), m = Math.floor(r % 3600 / 60);
+    return { txt: (h ? h + 'ч ' : '') + m + 'м', cls: '', rest };
+  }
+  const left = sec => { const t = timer(sec); return t.txt ? `<span class="${t.cls}">${t.txt}</span>` : ''; };
+  const capped = () => { const a = core.S.attrition; return !!(a && a.level >= core.getCfg().capLevel); };
   const COIN = { gbg_silver_coin: 'Серебро', gbg_gold_coin: 'Золото', gbg_platinum_coin: 'Платина' };
   const coinName = k => COIN[k] || k;
 
@@ -675,6 +721,14 @@
   #gbgI svg{width:26px;height:26px;pointer-events:none}
   #gbgI .bdg{position:absolute;right:-6px;bottom:-5px;min-width:18px;height:18px;padding:0 4px;box-sizing:border-box;border-radius:9px;background:#2d3239;border:1px solid #555d68;color:#e8e6df;font:700 11px/16px system-ui,Segoe UI,Arial,sans-serif;text-align:center}
   #gbgI .bdg.bad{background:#b3261e;border-color:#ff6b6b;color:#fff}
+  #gbgI .bdg.soon{background:#8a5a00;border-color:#ffb454;color:#fff}
+  #gbgI .bdg.max{background:#5c4a12;border-color:#c9a227;color:#f0c94a}
+  #gbgI .bdg.tick{animation:gbgB 1s steps(2) infinite}
+  @keyframes gbgB{50%{background:#ff6b6b}}
+  #gbgL .blink{animation:gbgB2 1s steps(2) infinite;font-weight:700}
+  @keyframes gbgB2{50%{opacity:.35}}
+  #gbgL tr.hot td{background:rgba(255,107,107,.12)}
+  #gbgL tr.near td{background:rgba(255,180,84,.08)}
   #gbgI .bdg:empty{display:none}
   #gbgI.flash{animation:gbgFI .5s 6}
   @keyframes gbgFI{50%{border-color:#ff6b6b;box-shadow:0 0 18px 4px #ff6b6b}}
@@ -767,8 +821,26 @@
     }, true);
     ui.applyVis = applyVis;
     applyVis();
-    setInterval(() => render(false), 1000);
+    setInterval(() => { safe(tick); render(false); }, 1000);
     render(true);
+  }
+
+  // ближайшая открывающаяся провинция, на которую можно напасть: отсчёт на значке и звук за 60 и 10 с
+  const soundFired = {};
+  let nextOpen = null;
+  function tick() {
+    const list = core.soonOpening(core.getCfg().soonWindowMin);
+    nextOpen = list.find(x => x.atk !== false && !x.mine && x.rest > 0) || null;
+    if (!core.getCfg().timerSound || !visible()) return;
+    for (const x of list) {
+      if (x.mine || x.atk === false || x.rest <= 0) continue;
+      for (const thr of [60, 10]) {
+        const k = x.p.id + ':' + x.p.lockedUntil + ':' + thr;
+        if (soundFired[k] || x.rest > thr || x.rest < thr - 5) continue;
+        soundFired[k] = 1;
+        chime(thr === 10 ? 3 : 1);
+      }
+    }
   }
   function visible() { return forceShow || onGbg || !core.getCfg().onlyGbg; }
   function applyVis() {
@@ -838,10 +910,14 @@
     const S = core.S;
     const a = S.attrition;
     const warn = a && a.level >= core.getCfg().warnLevel;
-    statusEl.innerHTML = `${S.fights.length} боёв · усталость <span class="${warn ? 'bad' : ''}">${a ? a.level : '—'}</span>`;
-    badge.textContent = a ? a.level : (S.fights.length || '');
-    badge.classList.toggle('bad', !!warn);
-    icon.title = `ПБГ логгер — ${S.fights.length} боёв, усталость ${a ? a.level : '—'}. Клик — открыть, тянуть — переместить.`;
+    const cap = capped();
+    const nt = nextOpen ? timer(nextOpen.p.lockedUntil) : null;
+    statusEl.innerHTML = (nt && nt.rest < 300 ? `<span class="${nt.cls}">${esc(core.provName(nextOpen.p.id))} ${nt.txt}</span> · ` : '') + `${S.fights.length} боёв · усталость <span class="${cap ? 'warn' : warn ? 'bad' : ''}">${a ? a.level : '—'}${cap ? ' MAX' : ''}</span>`;
+    badge.className = 'bdg';
+    if (nt && nt.rest < 300) { badge.textContent = nt.txt; badge.classList.add(nt.rest < 60 ? 'bad' : 'soon'); if (nt.rest < 60) badge.classList.add('tick'); }
+    else if (cap) { badge.textContent = 'MAX'; badge.classList.add('max'); }
+    else { badge.textContent = a ? a.level : (S.fights.length || ''); if (warn) badge.classList.add('bad'); }
+    icon.title = `ПБГ логгер — ${S.fights.length} боёв, усталость ${a ? a.level : '—'}${cap ? ' (потолок)' : ''}` + (nextOpen ? `. Ближайшая к открытию: ${core.provName(nextOpen.p.id)} через ${timer(nextOpen.p.lockedUntil).txt}` : '') + '. Клик — открыть, тянуть — переместить.';
     root.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.t === tab));
     if (root.style.display === 'none') return;
     if (!core.isDirty() && !force && tab !== 'map' && tab !== 'enemy') return;
@@ -858,10 +934,11 @@
       <div><small>Бои / победы</small><span>${st.fights}</span> <span class="mut">${st.wins}/${st.losses ? '<span class=bad>' + st.losses + '</span>' : 0}</span></div>
       <div><small>Темп, боёв/мин</small><span>${fmt(st.perMin)}</span></div>
       <div><small>Шанс награды</small><span>${pct(st.dropRate)}</span></div>
-      <div><small>Усталость</small><span class="${a && a.level >= cfg.warnLevel ? 'bad' : ''}">${a ? a.level : '—'}</span></div>
+      <div><small>Усталость</small><span class="${capped() ? 'warn' : a && a.level >= cfg.warnLevel ? 'bad' : ''}">${a ? a.level : '—'}</span> <span class="mut">${a ? (capped() ? 'MAX' : 'до потолка ' + (cfg.capLevel - a.level)) : ''}</span></div>
       <div><small>Бонус врага</small><span>${a ? '+' + fmt(a.bonus) + '%' : '—'}</span>${next != null ? ` <span class="mut">след. +${next}</span>` : ''}</div>
       <div><small>Множ. переговоров</small><span>${a ? a.neg : '—'}</span></div></div>`;
-    if (a && a.level >= cfg.warnLevel) h += `<div class="bad">⚠ Усталость ${a.level} — после 50 прирост бонуса врага за уровень почти удваивается.</div>`;
+    if (capped()) h += `<div class="warn">Потолок усталости (${cfg.capLevel}): сложность больше не растёт, шанс усталости провинции уже не важен.</div>`;
+    else if (a && a.level >= cfg.warnLevel) h += `<div class="bad">⚠ Усталость ${a.level} — после 50 прирост бонуса врага за уровень почти удваивается; рост идёт до ${cfg.capLevel}.</div>`;
     h += `<h4>Монеты за сессию</h4><table><tr><th>Вид</th><th>Выпало</th><th>Сумма</th><th>На бой</th></tr>`;
     for (const k of Object.keys(st.coins)) h += `<tr><td>${esc(coinName(k))}</td><td>${st.rewardCount[k]}</td><td>${fmt(st.coins[k])}</td><td>${fmt(st.coins[k] / Math.max(1, st.fights))}</td></tr>`;
     h += `</table>`;
@@ -889,11 +966,28 @@
     const S = core.S, my = S.bg.myPid;
     const provs = Object.values(S.bg.provinces);
     if (!provs.length) return '<div class="mut">Откройте карту ПБГ — данные придут с getBattleground.</div>';
-    const targets = provs.filter(p => p.owner !== my && !p.spawn).sort((a, b) => (a.att ?? 999) - (b.att ?? 999) || (a.lockedUntil || 0) - (b.lockedUntil || 0));
-    let h = `<h4>Чужие провинции — сначала самые «дешёвые» по усталости</h4><table><tr><th>Провинция</th><th>Владелец</th><th>Шанс</th><th>Мы</th><th>Замок</th><th>Слоты</th></tr>`;
+    const cfg = core.getCfg(), cap = capped();
+    // скоро откроются
+    const soon = core.soonOpening(cfg.soonWindowMin);
+    let h = `<h4>Скоро откроются (${cfg.soonWindowMin} мин)</h4>`;
+    if (soon.length) {
+      h += `<table><tr><th>Провинция</th><th>Владелец</th><th>Откроется</th><th>Рядом</th><th>Шанс</th></tr>`;
+      for (const x of soon) {
+        const t = timer(x.p.lockedUntil);
+        const row = !x.mine && x.atk !== false && t.rest < 60 ? 'hot' : !x.mine && x.atk !== false && t.rest < 300 ? 'near' : '';
+        const near = x.mine ? '🛡 наша' : x.atk === true ? '<span class=good>⚔ да</span>' : x.atk === null ? '?' : '<span class=mut>нет</span>';
+        h += `<tr class="${row}"><td>${pn(x.p.id)}</td><td>${who(x.p.owner)}</td><td class="${t.cls}">${t.txt}</td><td>${near}</td><td class="${cap ? 'mut' : ''}">${x.p.att == null ? '—' : x.p.att + '%'}</td></tr>`;
+      }
+      h += `</table>`;
+    } else h += `<div class="mut">В ближайшие ${cfg.soonWindowMin} мин ничего не открывается.</div>`;
+    // все чужие
+    const byLock = (a, b) => (a.lockedUntil || 0) - (b.lockedUntil || 0);
+    const targets = provs.filter(p => p.owner !== my && !p.spawn)
+      .sort(cap ? byLock : (a, b) => (a.att ?? 999) - (b.att ?? 999) || byLock(a, b));
+    h += `<h4>${cap ? 'Чужие провинции — по времени открытия (усталость на потолке, шанс не важен)' : 'Чужие провинции — сначала самые «дешёвые» по усталости'}</h4><table><tr><th>Провинция</th><th>Владелец</th><th>Шанс</th><th>Мы</th><th>Замок</th><th>Слоты</th></tr>`;
     for (const p of targets) {
       const mp = p.prog[my];
-      const cls = p.att == null ? '' : p.att <= 20 ? 'good' : p.att <= 60 ? 'warn' : 'bad';
+      const cls = cap ? 'mut' : p.att == null ? '' : p.att <= 20 ? 'good' : p.att <= 60 ? 'warn' : 'bad';
       h += `<tr><td>${pn(p.id)}</td><td>${who(p.owner)}</td><td class="${cls}">${p.att == null ? '—' : p.att + '%'}</td><td>${mp ? mp.p + '/' + mp.max : ''}</td><td>${left(p.lockedUntil)}</td><td>${p.slotsUsed}/${p.slotsTotal}</td></tr>`;
     }
     h += `</table>`;
@@ -936,7 +1030,12 @@
       h += `<tr><td>${l}</td><td>+${fmt(x.bonus)}%</td><td class="${jump ? 'warn' : ''}">${d == null ? '' : '+' + d}${jump ? ' ↑' : ''}</td><td>${x.neg}</td><td>${x.n}${x.conflict ? ' <span class=bad>≠' + x.conflict + '</span>' : ''}</td></tr>`;
       if (d != null) prevD = d;
     }
-    return h + '</table><div class="mut">↑ — скачок прироста больше чем на 30%. ≠ — на этом уровне встречались разные значения (значит, бонус зависит не только от уровня).</div>';
+    const capL = core.getCfg().capLevel;
+    const maxB = lv.length ? Math.max(...lv.map(l => c[l].bonus)) : null;
+    const atMax = lv.filter(l => c[l].bonus === maxB);
+    const obs = atMax.length >= 2 ? atMax[0] : null;
+    return h + `</table><div class="mut">↑ — скачок прироста больше чем на 30%. ≠ — на этом уровне встречались разные значения (значит, бонус зависит не только от уровня).</div>
+      <div class="mut">Потолок в настройках: ${capL}. По замерам бонус +${fmt(maxB)}% не растёт ${obs != null ? 'начиная не позже уровня ' + obs : '— пока мало данных'}${obs != null && obs < capL ? ' <span class=warn>(раньше настройки — проверьте)</span>' : ''}.</div>`;
   }
 
   function viewRew() {
@@ -991,9 +1090,10 @@
       <div class="mut">Сырой лог в том же формате, что и прошлые записи (items: t/kind/req/data), только без тяжёлых частей. Сейчас: ${S.raw.length} записей, ${S.activity.length} событий активности.</div>
       <h4>Настройки</h4>
       <div class="row">${chk('onlyGbg', 'Значок только на ПБГ')}${chk('rawLog', 'Писать сырой лог')}${chk('alertSound', 'Звук тревоги')}${chk('alertNotify', 'Уведомления')}</div>
+      <div class="row">${chk('timerSound', 'Звук перед открытием (за 60 и 10 с)')}${num('soonWindowMin', 'Окно «скоро откроются», мин')}${num('capLevel', 'Потолок усталости')}</div>
       <div class="row">${num('warnLevel', 'Предупреждать с уровня')}${num('alertMinProgress', 'Тревога от %')}${num('alertCooldownSec', 'Пауза тревоги, с')}${num('activityWindowMin', 'Окно активности, мин')}</div>
-      <h4>Сессия</h4><div class="row"><button data-a="new">Новая сессия (очистить)</button><button data-a="test">Проверить тревогу</button></div>
-      <div class="mut">Пачек: ${S.counters.batches} (xhr ${S.counters.xhr || 0}, ws ${S.counters.ws || 0}). Игрок: ${esc(S.session.playerName || '—')}. Метаданные карт: ${Object.keys(persist.meta.maps).length ? 'есть' : 'нет (названия провинций будут как #id)'}. Консоль: <code>__foeGbgLogger.S</code></div>
+      <h4>Сессия</h4><div class="row"><button data-a="new">Новая сессия (очистить)</button><button data-a="test">Проверить тревогу</button><button data-a="testT">Проверить звук открытия</button></div>
+      <div class="mut">Пачек: ${S.counters.batches} (xhr ${S.counters.xhr || 0}, ws ${S.counters.ws || 0}). Игрок: ${esc(S.session.playerName || '—')}. Метаданные карт: ${Object.keys(persist.meta.maps).length ? 'есть' : 'нет (названия провинций будут как #id, соседство неизвестно)'}. Поправка часов по серверу: ${S.timeOffset == null ? '—' : (S.timeOffset / 1000).toFixed(1) + ' с'}. Консоль: <code>__foeGbgLogger.S</code></div>
       <div class="mut">Alt+G — открыть или закрыть панель где угодно (например, чтобы сделать экспорт уже в городе). Сейчас: ${onGbg ? 'на ПБГ' : 'не на ПБГ'}.</div>`;
   }
 
@@ -1021,6 +1121,7 @@
       idbPut(SESSION_KEY, null).finally(() => location.reload());
     }
     if (a === 'test') ui.alert({ name: 'Тестовая провинция', who: 'Тест', p: 50, max: 100 });
+    if (a === 'testT') chime(3);
   }
 
   // тревоги
@@ -1029,6 +1130,12 @@
     try {
       actx = actx || new (W.AudioContext || W.webkitAudioContext)();
       [0, 0.25].forEach(d => { const o = actx.createOscillator(), g = actx.createGain(); o.frequency.value = 880; g.gain.value = 0.08; o.connect(g); g.connect(actx.destination); o.start(actx.currentTime + d); o.stop(actx.currentTime + d + 0.15); });
+    } catch (e) { /* звук недоступен */ }
+  }
+  function chime(n) {
+    try {
+      actx = actx || new (W.AudioContext || W.webkitAudioContext)();
+      for (let i = 0; i < n; i++) [660, 990].forEach((f, j) => { const o = actx.createOscillator(), g = actx.createGain(); o.frequency.value = f; g.gain.value = 0.07; o.connect(g); g.connect(actx.destination); const t0 = actx.currentTime + i * 0.35 + j * 0.12; o.start(t0); o.stop(t0 + 0.1); });
     } catch (e) { /* звук недоступен */ }
   }
   ui.alert = a => {
