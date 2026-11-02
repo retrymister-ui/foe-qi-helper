@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FoE КВ журнал наград
 // @namespace    foe-qi-reward-log
-// @version      1.2
+// @version      1.3
 // @description  Записывает каждое действие на квантовой карте (бой, пожертвование) и выпавшую награду; считает частоты и проверяет, влияет ли перезаход. Сам ничего не нажимает.
 // @match        https://*.forgeofempires.com/game/*
 // @run-at       document-start
@@ -99,6 +99,19 @@
     if (bat && R['BattlefieldService.startByBattleType']) {
       const b = R['BattlefieldService.startByBattleType'][0];
       action = { a: 'battle', node: bat.requestData[0].nodeId || curNode, win: b && b.state && b.state.winnerBit === 1 ? 1 : 0, auto: bat.requestData[1] ? 1 : 0 };
+    }
+    // бой из нескольких волн: следующая волна — тот же бой (награда приходит с последней волной)
+    if (action && action.a === 'battle') {
+      const bt = bat.requestData[0] || {}, last = rows[rows.length - 1];
+      const sameFight = last && last.ses === session && last.node === action.node && last.a === 'battle' &&
+        ((bt.currentWaveId || 0) > 0 || (deckPts != null && last.deck === deckPts && Date.now() - Date.parse(last.t) < 1200));
+      if (sameFight) {
+        const set = (R['RewardService.collectRewardSet'] || []).find((x) => x && x.context === 'guild_raids');
+        const rw = set && set.reward && set.reward.rewards && set.reward.rewards[0];
+        if (rw) { last.rw = rkey(rw); last.rn = rw.name; }
+        last.waves = (last.waves || 1) + 1; save(); render();
+        action = null;
+      }
     }
     if (action) {
       idx++;
