@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FoE КВ журнал наград
 // @namespace    foe-qi-reward-log
-// @version      1.1
+// @version      1.2
 // @description  Записывает каждое действие на квантовой карте (бой, пожертвование) и выпавшую награду; считает частоты и проверяет, влияет ли перезаход. Сам ничего не нажимает.
 // @match        https://*.forgeofempires.com/game/*
 // @run-at       document-start

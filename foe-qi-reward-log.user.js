@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FoE КВ журнал наград
 // @namespace    foe-qi-reward-log
-// @version      1.1
+// @version      1.2
 // @description  Записывает каждое действие на квантовой карте (бой, пожертвование) и выпавшую награду; считает частоты и проверяет, влияет ли перезаход. Сам ничего не нажимает.
 // @match        https://*.forgeofempires.com/game/*
 // @run-at       document-start
@@ -23,6 +23,8 @@
   let session = Math.max(0, ...rows.map((r) => r.ses || 0));
   let idx = 0;              // номер действия в заходе
   let curNode = null;
+  let deckPts = null, lastNode = null, onNode = 0;   // колода (очки), действий подряд на узле
+  const nodeProg = {};      // nodeId -> прогресс узла
   const chests = {};        // nodeId -> {id, table}
   let visible = false;
 
@@ -44,6 +46,21 @@
     return oSend.apply(this, arguments);
   };
 
+  // часть данных (колода, прогресс узла, ходы) игра шлёт по WebSocket — только читаем входящие
+  const OWS = window.WebSocket;
+  if (OWS) {
+    const WS = function (url, prot) {
+      const ws = prot !== undefined ? new OWS(url, prot) : new OWS(url);
+      ws.addEventListener('message', (ev) => {
+        if (typeof ev.data !== 'string' || ev.data.indexOf('GuildRaids') === -1) return;
+        try { const d = JSON.parse(ev.data); handle([], Array.isArray(d) ? d : [d]); } catch (e) { /* не JSON */ }
+      });
+      return ws;
+    };
+    WS.prototype = OWS.prototype;
+    ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'].forEach((k) => { WS[k] = OWS[k]; });
+    window.WebSocket = WS;
+  }
   function handle(reqs, resps) {
     if (!Array.isArray(resps)) return;
     const R = {};
@@ -71,6 +88,9 @@
       if (rw) chests[q.requestData[0]] = { id: rw.id, table: (rw.possible_rewards || []).map((p) => ({ c: p.drop_chance, k: rkey(p.reward), n: p.reward.name })) };
     });
 
+    // колода наград и прогресс узла приходят отдельными сообщениями (часто перед ответом на бой)
+    (R['GuildRaidsService.updateRewardDeckProgress'] || []).forEach((d) => { if (d && d.currentPoints != null) deckPts = d.currentPoints; });
+    (R['GuildRaidsMapService.updateNodeCurrentProgress'] || []).forEach((d) => { if (d && d.nodeId) nodeProg[d.nodeId] = d.currentProgress; });
     // действие: пожертвование или бой на карте
     let action = null;
     const don = Q.find((q) => q.requestClass === 'GuildRaidsMapService' && q.requestMethod === 'donate');
@@ -85,10 +105,12 @@
       const set = (R['RewardService.collectRewardSet'] || []).find((s) => s && s.context === 'guild_raids');
       const rw = set && set.reward && set.reward.rewards && set.reward.rewards[0];
       const deck = (R['RewardDeckService.getFreeRewardsState'] || [])[0];
+      if (action.node !== lastNode) { lastNode = action.node; onNode = 0; }
+      onNode++;
       const ch = chests[action.node];
       rows.push({
         t: new Date().toISOString(), srv: server, ses: session, i: idx, node: action.node, chest: ch ? ch.id : '', a: action.a, win: action.win,
-        rw: rw ? rkey(rw) : '', rn: rw ? rw.name : '', deck: deck ? deck.currentProgress : null,
+        rw: rw ? rkey(rw) : '', rn: rw ? rw.name : '', deck: deckPts != null ? deckPts : (deck ? deck.currentProgress : null), np: nodeProg[action.node] != null ? nodeProg[action.node] : null, run: onNode,
       });
       save(); render();
     }
@@ -174,8 +196,8 @@
     panel.querySelector('#rl-h').onclick = () => { open = !open; render(); };
     const csv = panel.querySelector('#rl-csv');
     if (csv) csv.onclick = () => {
-      const head = ['время', 'сервер', 'заход', 'номер_в_заходе', 'узел', 'сундук', 'действие', 'победа', 'награда', 'название', 'колода'];
-      const lines = [head.join(';')].concat(rows.map((r) => [r.t, r.srv, r.ses, r.i, r.node, r.chest, r.a, r.win, r.rw, r.rn, r.deck].map((v) => String(v == null ? '' : v).replace(/;/g, ',')).join(';')));
+      const head = ['время', 'сервер', 'заход', 'номер_в_заходе', 'узел', 'сундук', 'действие', 'победа', 'награда', 'название', 'колода', 'прогресс_узла', 'подряд_на_узле'];
+      const lines = [head.join(';')].concat(rows.map((r) => [r.t, r.srv, r.ses, r.i, r.node, r.chest, r.a, r.win, r.rw, r.rn, r.deck, r.np, r.run].map((v) => String(v == null ? '' : v).replace(/;/g, ',')).join(';')));
       const a = document.createElement('a');
       a.href = URL.createObjectURL(new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8' }));
       a.download = 'qi-rewards-' + new Date().toISOString().slice(0, 10) + '.csv'; document.body.appendChild(a); a.click(); setTimeout(() => a.remove(), 1000);
