@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FoE калькулятор вложений в ВЗ
 // @namespace    foe-gb-calc
-// @version      1.1
+// @version      1.2
 // @description  При открытии чужого ВЗ показывает, сколько СО вложить, чтобы гарантированно занять место, и прибыль с учётом медного и золотого бонуса Арки. Сам ничего не нажимает.
 // @author       MisterDan
 // @match        https://*.forgeofempires.com/game/*
@@ -41,8 +41,31 @@
     return oSend.apply(this, arguments);
   };
 
+  // бонусы вложений складываются: ВЗ (Арка, Сифон…) + исследования и прочие постоянные усиления
+  let myId = null;
+  const gbB = {};           // entityId -> {name, cu, au}
+  let extB = null;          // из BoostService.getAllBoosts: {cu, au, list}
+  const GBN = { X_FutureEra_Landmark1: 'Арка', X_StellarAgeDiscovery_Landmark1: 'Сифон' };
+  function keepBonus(e) {
+    if (myId == null || e.player_id !== myId) return;
+    let cu = 0, au = 0;
+    (e.bonuses || []).forEach((b) => { if (b.type === 'contribution_boost') cu += b.value || 0; if (b.type === 'contribution_boost_gold') au += b.value || 0; });
+    if (cu || au) gbB[e.id] = { name: GBN[e.cityentity_id] || e.cityentity_id, cu, au }; else delete gbB[e.id];
+  }
+  function auto() {
+    const g = Object.values(gbB);
+    if (!g.length && !extB) return null;
+    let cu = 0, au = 0; const parts = [];
+    g.forEach((b) => { cu += b.cu; au += b.au; if (b.au) parts.push(`${b.name} ${b.au}`); });
+    if (extB) { cu += extB.cu; au += extB.au; extB.list.forEach((x) => parts.push(x)); }
+    return { cu, au, parts };
+  }
+  const copperPct = () => { const a = auto(); return a && cfg.autoB !== false ? a.cu : cfg.copper; };
+  const goldK = () => { const a = auto(); return a && cfg.autoB !== false ? 1 + a.au / 100 : cfg.gold; };
+
   function keepEnt(e) {
     if (!e || e.type !== 'greatbuilding') return;
+    keepBonus(e);
     const st = e.state || {};
     ents[e.id] = { cost: st.forge_points_for_level_up, inv: st.invested_forge_points || 0, level: e.level, max: e.max_level, cid: e.cityentity_id, owner: e.player_id };
   }
@@ -55,7 +78,16 @@
       const q = byId[r.requestId] || {};
       const d = r.responseData;
       const m = r.requestMethod;
-      if (m === 'getData' && d && d.city_map) (d.city_map.entities || []).forEach(keepEnt);
+      if (m === 'getData' && d && d.city_map) { if (d.user_data) myId = d.user_data.player_id; (d.city_map.entities || []).forEach(keepEnt); }
+      else if (m === 'getAllBoosts' && Array.isArray(d)) {
+        const sum = { cu: 0, au: 0, list: [] }; const by = {};
+        d.forEach((b) => {
+          if (b.type !== 'contribution_boost' && b.type !== 'contribution_boost_gold') return;
+          if (b.type === 'contribution_boost') sum.cu += b.value || 0; else { sum.au += b.value || 0; const o = b.origin === 'research' ? 'исследования' : (b.origin || 'прочее'); by[o] = (by[o] || 0) + (b.value || 0); }
+        });
+        sum.list = Object.entries(by).map(([k, v]) => `${k} ${v}`);
+        extB = sum; if (cur) render();
+      }
       else if (m === 'getOtherPlayerCityMapEntity' || m === 'getCityMapEntity') keepEnt(d);
       else if (r.requestClass === 'CityMapService' && m === 'updateEntity' && Array.isArray(d)) d.forEach(keepEnt);
       else if (m === 'getConstruction' && d && d.rankings) {
@@ -70,7 +102,9 @@
         const s = shown[d.rank];
         if (s && s > 0) {
           const f = d.strategy_point_amount / s;
-          if (f > 0.9 && f < 3) { cfg.gold = Math.round(f * 1000) / 1000; save(); note = `Калибровка: показано ${s}, пришло ${d.strategy_point_amount}, коэффициент ${cfg.gold}`; render(); }
+          const a = auto();
+          if (a && cfg.autoB !== false) note = `Проверка: показано ${s}, пришло ${d.strategy_point_amount} (×${(Math.round(f * 1000) / 1000)}), по бонусам ×${goldK()}`;
+          else if (f > 0.9 && f < 3) { cfg.gold = Math.round(f * 1000) / 1000; save(); note = `Калибровка: показано ${s}, пришло ${d.strategy_point_amount}, коэффициент ${cfg.gold}`; render(); }
         }
       }
     });
@@ -119,11 +153,11 @@
       };
       let add = -1;
       if (safe(R)) { let lo = 0, hi = R; while (lo < hi) { const mid = (lo + hi) >> 1; if (safe(mid)) hi = mid; else lo = mid + 1; } add = lo; }
-      const sp = Math.round(rw.strategy_point_amount * cfg.gold);
+      const sp = Math.round(rw.strategy_point_amount * goldK());
       // номинал места (без Арки) × коэффициент; таблица показывает награду уже с медным бонусом
-      const nom = rw.strategy_point_amount / (1 + cfg.copper / 100);
+      const nom = rw.strategy_point_amount / (1 + copperPct() / 100);
       const fa = Math.round(nom * factor());
-      const med = Math.round(((rw.resources && rw.resources.medals) || 0) * cfg.gold);
+      const med = Math.round(((rw.resources && rw.resources.medals) || 0) * goldK());
       const ok = add >= 0;
       // сколько реально вложить: по коэффициенту, но не меньше минимума и не больше остатка
       const put = ok ? Math.min(R, Math.max(fa, add)) : 0;
@@ -183,8 +217,15 @@
       const nm = ownerName();
       const row = 'margin-top:5px;color:#aaa;display:flex;align-items:center;gap:4px;flex-wrap:wrap';
       if (c && !c.err) h += `<div style="${row}">Коэф. ${nm ? 'для ' + nm : ''} ×<input data-pf type="number" step="0.05" min="1" max="3" value="${factor()}" style="width:46px;background:#222;color:#fff;border:1px solid #555;border-radius:3px;padding:1px 3px">${own ? '<span data-pr style="cursor:pointer;color:#9ab;text-decoration:underline" title="Вернуть общий">свой, сброс</span>' : ''}</div>`;
-      h += `<div style="${row}">По умолчанию ×<input data-df type="number" step="0.05" min="1" max="3" value="${cfg.f}" style="width:46px;background:#222;color:#fff;border:1px solid #555;border-radius:3px;padding:1px 3px"> Медь Арки <input data-cu type="number" step="1" min="0" max="200" value="${cfg.copper}" style="width:46px;background:#222;color:#fff;border:1px solid #555;border-radius:3px;padding:1px 3px">%</div>`;
-      h += `<div style="${row}">Золото ×<input data-g type="number" step="0.01" min="1" max="2" value="${cfg.gold}" style="width:46px;background:#222;color:#fff;border:1px solid #555;border-radius:3px;padding:1px 3px"></div>`;
+      h += `<div style="${row}">По умолчанию ×<input data-df type="number" step="0.05" min="1" max="3" value="${cfg.f}" style="width:46px;background:#222;color:#fff;border:1px solid #555;border-radius:3px;padding:1px 3px"></div>`;
+      const a = auto();
+      if (a && cfg.autoB !== false) {
+        h += `<div style="${row}">Медь ${a.cu}%, золото <b style="color:#e8d27a">${a.au}%</b> <span data-am style="cursor:pointer;color:#9ab;text-decoration:underline">вручную</span></div>`;
+        if (a.parts.length) h += `<div style="color:#888;font-size:11px">золото: ${a.parts.join(' + ')}</div>`;
+      } else {
+        h += `<div style="${row}">Медь <input data-cu type="number" step="1" min="0" max="300" value="${cfg.copper}" style="width:46px;background:#222;color:#fff;border:1px solid #555;border-radius:3px;padding:1px 3px">% Золото ×<input data-g type="number" step="0.01" min="1" max="2" value="${cfg.gold}" style="width:46px;background:#222;color:#fff;border:1px solid #555;border-radius:3px;padding:1px 3px">${a ? ' <span data-aa style="cursor:pointer;color:#9ab;text-decoration:underline">авто</span>' : ''}</div>`;
+        if (!a) h += '<div style="color:#888;font-size:11px">Бонусы подтянутся сами после перезагрузки игры.</div>';
+      }
       if (note) h += `<div style="color:#9ab;margin-top:3px">${note}</div>`;
       h += '<div style="color:#777;margin-top:3px;font-size:11px">×коэф.: номинал места × коэффициент. Мин.: меньше нельзя, место отнимут. Красным: по коэффициенту место не удержать, считаю по минимуму.</div>';
       h += '</div>';
@@ -199,10 +240,12 @@
     const num = (sel, lo, hi, fn) => { const el = box.querySelector(sel); if (el) el.onchange = () => { const v = parseFloat(el.value); if (v >= lo && v <= hi) { fn(v); save(); render(); } }; };
     num('[data-pf]', 1, 3, (v) => { const k = plKey(); if (!k) return; if (v === cfg.f) delete cfg.pl[k]; else cfg.pl[k] = { f: v, n: ownerName() }; });
     num('[data-df]', 1, 3, (v) => { cfg.f = v; });
-    num('[data-cu]', 0, 200, (v) => { cfg.copper = v; });
+    num('[data-cu]', 0, 300, (v) => { cfg.copper = v; });
+    const am = box.querySelector('[data-am]'); if (am) am.onclick = () => { const a = auto(); cfg.autoB = false; if (a) { cfg.copper = a.cu; cfg.gold = 1 + a.au / 100; } save(); render(); };
+    const aa = box.querySelector('[data-aa]'); if (aa) aa.onclick = () => { cfg.autoB = true; save(); render(); };
     const pr = box.querySelector('[data-pr]');
     if (pr) pr.onclick = () => { delete cfg.pl[plKey()]; save(); render(); };
   }
 
-  window.foeGbCalc = { get cfg() { return cfg; }, compute, handle, ents };
+  window.foeGbCalc = { get cfg() { return cfg; }, compute, handle, ents, auto };
 })();
