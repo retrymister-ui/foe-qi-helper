@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FoE калькулятор вложений в ВЗ
 // @namespace    foe-gb-calc
-// @version      1.2
+// @version      1.3
 // @description  При открытии чужого ВЗ показывает, сколько СО вложить, чтобы гарантированно занять место, и прибыль с учётом медного и золотого бонуса Арки. Сам ничего не нажимает.
 // @author       MisterDan
 // @match        https://*.forgeofempires.com/game/*
@@ -15,7 +15,7 @@
 (function () {
   'use strict';
   const KEY = 'foeGbCalc_v1';
-  let cfg = { gold: 1.29, copper: 100, f: 1.9, pl: {}, x: null, y: 60, hidden: false };
+  let cfg = { gold: 1.29, copper: 100, f: 1.9, pre: [1.9, 1.97, 2], wg: false, pl: {}, x: null, y: 60, hidden: false };
   try { Object.assign(cfg, JSON.parse(localStorage.getItem(KEY) || '{}')); } catch (e) { /* ignore */ }
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(cfg)); } catch (e) { /* ignore */ } };
 
@@ -156,7 +156,7 @@
       const sp = Math.round(rw.strategy_point_amount * goldK());
       // номинал места (без Арки) × коэффициент; таблица показывает награду уже с медным бонусом
       const nom = rw.strategy_point_amount / (1 + copperPct() / 100);
-      const fa = Math.round(nom * factor());
+      const fa = Math.round(nom * factor() * (cfg.wg ? goldK() : 1));   // с золотом: как в FoE Helper, выход в ноль
       const med = Math.round(((rw.resources && rw.resources.medals) || 0) * goldK());
       const ok = add >= 0;
       // сколько реально вложить: по коэффициенту, но не меньше минимума и не больше остатка
@@ -217,6 +217,9 @@
       const nm = ownerName();
       const row = 'margin-top:5px;color:#aaa;display:flex;align-items:center;gap:4px;flex-wrap:wrap';
       if (c && !c.err) h += `<div style="${row}">Коэф. ${nm ? 'для ' + nm : ''} ×<input data-pf type="number" step="0.05" min="1" max="3" value="${factor()}" style="width:46px;background:#222;color:#fff;border:1px solid #555;border-radius:3px;padding:1px 3px">${own ? '<span data-pr style="cursor:pointer;color:#9ab;text-decoration:underline" title="Вернуть общий">свой, сброс</span>' : ''}</div>`;
+      const btn = 'cursor:pointer;padding:1px 6px;border-radius:3px;border:1px solid #8a6d3b';
+      if (c && !c.err) h += `<div style="${row}">${cfg.pre.map((v) => `<span data-ps="${v}" style="${btn};background:${v === factor() ? '#8a6d3b;color:#fff' : '#3a2e1c'}">${Math.round((v - 1) * 100)}%</span><span data-pd="${v}" style="cursor:pointer;color:#a66" title="Убрать">×</span>`).join('')}<span data-pa style="${btn};background:#2e4a2e" title="Добавить текущий">+</span></div>`;
+      h += `<label style="${row};cursor:pointer"><input data-wg type="checkbox" ${cfg.wg ? 'checked' : ''}> вкладывать с золотом (выход в ноль, как FoE Helper)</label>`;
       h += `<div style="${row}">По умолчанию ×<input data-df type="number" step="0.05" min="1" max="3" value="${cfg.f}" style="width:46px;background:#222;color:#fff;border:1px solid #555;border-radius:3px;padding:1px 3px"></div>`;
       const a = auto();
       if (a && cfg.autoB !== false) {
@@ -227,7 +230,7 @@
         if (!a) h += '<div style="color:#888;font-size:11px">Бонусы подтянутся сами после перезагрузки игры.</div>';
       }
       if (note) h += `<div style="color:#9ab;margin-top:3px">${note}</div>`;
-      h += '<div style="color:#777;margin-top:3px;font-size:11px">×коэф.: номинал места × коэффициент. Мин.: меньше нельзя, место отнимут. Красным: по коэффициенту место не удержать, считаю по минимуму.</div>';
+      h += '<div style="color:#777;margin-top:3px;font-size:11px">Кнопки %: бонус Арки вкладчика (90% = ×1,9), нажатие ставит коэффициент этому игроку. ×коэф.: номинал места × коэффициент. Мин.: меньше нельзя, место отнимут. Красным: по коэффициенту место не удержать, считаю по минимуму.</div>';
       h += '</div>';
     }
     box.innerHTML = h;
@@ -243,6 +246,11 @@
     num('[data-cu]', 0, 300, (v) => { cfg.copper = v; });
     const am = box.querySelector('[data-am]'); if (am) am.onclick = () => { const a = auto(); cfg.autoB = false; if (a) { cfg.copper = a.cu; cfg.gold = 1 + a.au / 100; } save(); render(); };
     const aa = box.querySelector('[data-aa]'); if (aa) aa.onclick = () => { cfg.autoB = true; save(); render(); };
+    const setF = (v) => { const k = plKey(); if (!k) return; if (v === cfg.f) delete cfg.pl[k]; else cfg.pl[k] = { f: v, n: ownerName() }; save(); render(); };
+    box.querySelectorAll('[data-ps]').forEach((el) => { el.onclick = () => setF(parseFloat(el.dataset.ps)); });
+    box.querySelectorAll('[data-pd]').forEach((el) => { el.onclick = () => { const v = parseFloat(el.dataset.pd); cfg.pre = cfg.pre.filter((x) => x !== v); save(); render(); }; });
+    const pa = box.querySelector('[data-pa]'); if (pa) pa.onclick = () => { const v = factor(); if (!cfg.pre.includes(v)) { cfg.pre.push(v); cfg.pre.sort((a, b) => a - b); save(); render(); } };
+    const wg = box.querySelector('[data-wg]'); if (wg) wg.onchange = () => { cfg.wg = wg.checked; save(); render(); };
     const pr = box.querySelector('[data-pr]');
     if (pr) pr.onclick = () => { delete cfg.pl[plKey()]; save(); render(); };
   }
