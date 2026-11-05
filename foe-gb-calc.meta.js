@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FoE калькулятор вложений в ВЗ
 // @namespace    foe-gb-calc
-// @version      1.0
+// @version      1.1
 // @description  При открытии чужого ВЗ показывает, сколько СО вложить, чтобы гарантированно занять место, и прибыль с учётом медного и золотого бонуса Арки. Сам ничего не нажимает.
 // @author       MisterDan
 // @match        https://*.forgeofempires.com/game/*

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FoE калькулятор вложений в ВЗ
 // @namespace    foe-gb-calc
-// @version      1.0
+// @version      1.1
 // @description  При открытии чужого ВЗ показывает, сколько СО вложить, чтобы гарантированно занять место, и прибыль с учётом медного и золотого бонуса Арки. Сам ничего не нажимает.
 // @author       MisterDan
 // @match        https://*.forgeofempires.com/game/*
@@ -15,7 +15,7 @@
 (function () {
   'use strict';
   const KEY = 'foeGbCalc_v1';
-  let cfg = { gold: 1.29, x: null, y: 60, hidden: false };
+  let cfg = { gold: 1.29, copper: 100, f: 1.9, pl: {}, x: null, y: 60, hidden: false };
   try { Object.assign(cfg, JSON.parse(localStorage.getItem(KEY) || '{}')); } catch (e) { /* ignore */ }
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(cfg)); } catch (e) { /* ignore */ } };
 
@@ -76,6 +76,10 @@
     });
   }
   let note = '';
+  // коэффициент вложения: свой для игрока, если меняли, иначе общий
+  const ownerName = () => { const o = ((cur && cur.rankings) || []).find((x) => x.rank == null && x.player && !x.player.is_self); return o ? o.player.name : ''; };
+  const plKey = () => (cur && cur.owner != null ? String(cur.owner) : '');
+  const factor = () => { const p = cfg.pl[plKey()]; return p && p.f ? p.f : cfg.f; };
 
   // сколько вложить, чтобы место k было гарантировано при любом раскладе оставшихся СО
   function compute() {
@@ -116,9 +120,14 @@
       let add = -1;
       if (safe(R)) { let lo = 0, hi = R; while (lo < hi) { const mid = (lo + hi) >> 1; if (safe(mid)) hi = mid; else lo = mid + 1; } add = lo; }
       const sp = Math.round(rw.strategy_point_amount * cfg.gold);
+      // номинал места (без Арки) × коэффициент; таблица показывает награду уже с медным бонусом
+      const nom = rw.strategy_point_amount / (1 + cfg.copper / 100);
+      const fa = Math.round(nom * factor());
       const med = Math.round(((rw.resources && rw.resources.medals) || 0) * cfg.gold);
       const ok = add >= 0;
-      out.push({ k, add, ok, sp, med, profit: sp - add, held: ok && add === 0 });
+      // сколько реально вложить: по коэффициенту, но не меньше минимума и не больше остатка
+      const put = ok ? Math.min(R, Math.max(fa, add)) : 0;
+      out.push({ k, add, ok, sp, med, fa, put, short: ok && fa < add, profit: sp - put, held: ok && add === 0 });
     }
     return { R, cost: e.cost, invested, myCur, level: e.level, out };
   }
@@ -157,21 +166,27 @@
       else if (c.err) h += c.err;
       else {
         h += `<div style="color:#bbb;margin-bottom:4px">Ур. ${c.level}→${c.level + 1}: осталось <b style="color:#fff">${fmt(c.R)}</b> из ${fmt(c.cost)}${c.myCur ? `, ваше ${fmt(c.myCur)}` : ''}</div>`;
-        h += '<table style="border-collapse:collapse;width:100%"><tr style="color:#aaa"><td>Место</td><td style="text-align:right">Вложить</td><td style="text-align:right">Придёт</td><td style="text-align:right">Итог</td></tr>';
+        h += `<table style="border-collapse:collapse;width:100%"><tr style="color:#aaa"><td>Место</td><td style="text-align:right">×${factor()}</td><td style="text-align:right">Мин.</td><td style="text-align:right">Придёт</td><td style="text-align:right">Итог</td></tr>`;
         let heldSeen = false;
         c.out.forEach((o) => {
           if (heldSeen) return;
           if (o.held) heldSeen = true;
-          if (o.held) { h += `<tr><td>${o.k}</td><td colspan="3" style="text-align:right;color:#7fd17f">закреплено, придёт ${fmt(o.sp)}</td></tr>`; return; }
-          if (!o.ok) { h += `<tr style="color:#777"><td>${o.k}</td><td colspan="3" style="text-align:right">не закрепить</td></tr>`; return; }
+          if (o.held) { h += `<tr><td>${o.k}</td><td colspan="4" style="text-align:right;color:#7fd17f">закреплено, придёт ${fmt(o.sp)}</td></tr>`; return; }
+          if (!o.ok) { h += `<tr style="color:#777"><td>${o.k}</td><td colspan="4" style="text-align:right">не закрепить</td></tr>`; return; }
           const col = o.profit > 0 ? '#7fd17f' : o.profit === 0 ? '#e8d27a' : '#e07a6a';
-          h += `<tr><td>${o.k}</td><td style="text-align:right;font-weight:bold">${fmt(o.add)}</td><td style="text-align:right">${fmt(o.sp)}</td><td style="text-align:right;color:${col}">${o.profit > 0 ? '+' : ''}${fmt(o.profit)}</td></tr>`;
+          const faTxt = o.short ? `<span style="color:#e07a6a" title="По коэффициенту место отнимут">${fmt(o.fa)}</span>` : `<b>${fmt(o.fa)}</b>`;
+          h += `<tr><td>${o.k}</td><td style="text-align:right">${faTxt}</td><td style="text-align:right;color:#bbb">${fmt(o.add)}</td><td style="text-align:right">${fmt(o.sp)}</td><td style="text-align:right;color:${col}" title="при вложении ${fmt(o.put)}">${o.profit > 0 ? '+' : ''}${fmt(o.profit)}</td></tr>`;
         });
         h += '</table>';
       }
-      h += `<div style="margin-top:6px;color:#aaa;display:flex;align-items:center;gap:4px">Золотой бонус ×<input data-g type="number" step="0.01" min="1" max="2" value="${cfg.gold}" style="width:52px;background:#222;color:#fff;border:1px solid #555;border-radius:3px;padding:1px 3px"></div>`;
+      const own = cfg.pl[plKey()];
+      const nm = ownerName();
+      const row = 'margin-top:5px;color:#aaa;display:flex;align-items:center;gap:4px;flex-wrap:wrap';
+      if (c && !c.err) h += `<div style="${row}">Коэф. ${nm ? 'для ' + nm : ''} ×<input data-pf type="number" step="0.05" min="1" max="3" value="${factor()}" style="width:46px;background:#222;color:#fff;border:1px solid #555;border-radius:3px;padding:1px 3px">${own ? '<span data-pr style="cursor:pointer;color:#9ab;text-decoration:underline" title="Вернуть общий">свой, сброс</span>' : ''}</div>`;
+      h += `<div style="${row}">По умолчанию ×<input data-df type="number" step="0.05" min="1" max="3" value="${cfg.f}" style="width:46px;background:#222;color:#fff;border:1px solid #555;border-radius:3px;padding:1px 3px"> Медь Арки <input data-cu type="number" step="1" min="0" max="200" value="${cfg.copper}" style="width:46px;background:#222;color:#fff;border:1px solid #555;border-radius:3px;padding:1px 3px">%</div>`;
+      h += `<div style="${row}">Золото ×<input data-g type="number" step="0.01" min="1" max="2" value="${cfg.gold}" style="width:46px;background:#222;color:#fff;border:1px solid #555;border-radius:3px;padding:1px 3px"></div>`;
       if (note) h += `<div style="color:#9ab;margin-top:3px">${note}</div>`;
-      h += '<div style="color:#777;margin-top:3px;font-size:11px">Вложить: сколько добавить, чтобы место не отняли. Придёт: СО с Аркой.</div>';
+      h += '<div style="color:#777;margin-top:3px;font-size:11px">×коэф.: номинал места × коэффициент. Мин.: меньше нельзя, место отнимут. Красным: по коэффициенту место не удержать, считаю по минимуму.</div>';
       h += '</div>';
     }
     box.innerHTML = h;
@@ -181,6 +196,12 @@
     box.querySelector('[data-x]').onclick = () => { box.style.display = 'none'; };
     const g = box.querySelector('[data-g]');
     if (g) g.onchange = () => { const v = parseFloat(g.value); if (v >= 1 && v <= 2) { cfg.gold = v; save(); note = ''; render(); } };
+    const num = (sel, lo, hi, fn) => { const el = box.querySelector(sel); if (el) el.onchange = () => { const v = parseFloat(el.value); if (v >= lo && v <= hi) { fn(v); save(); render(); } }; };
+    num('[data-pf]', 1, 3, (v) => { const k = plKey(); if (!k) return; if (v === cfg.f) delete cfg.pl[k]; else cfg.pl[k] = { f: v, n: ownerName() }; });
+    num('[data-df]', 1, 3, (v) => { cfg.f = v; });
+    num('[data-cu]', 0, 200, (v) => { cfg.copper = v; });
+    const pr = box.querySelector('[data-pr]');
+    if (pr) pr.onclick = () => { delete cfg.pl[plKey()]; save(); render(); };
   }
 
   window.foeGbCalc = { get cfg() { return cfg; }, compute, handle, ents };
