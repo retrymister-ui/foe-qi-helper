@@ -10,6 +10,7 @@
 3. Откройте ссылку и нажмите «Установить»:
    - Помощник: https://raw.githubusercontent.com/retrymister-ui/foe-qi-helper/main/foe-qi-helper.user.js
    - Журнал наград: https://raw.githubusercontent.com/retrymister-ui/foe-qi-helper/main/foe-qi-reward-log.user.js
+   - Калькулятор вложений в ВЗ: https://raw.githubusercontent.com/retrymister-ui/foe-qi-helper/main/foe-gb-calc.user.js
    - Логгер ПБГ: https://raw.githubusercontent.com/retrymister-ui/foe-qi-helper/main/foe-gbg-logger.user.js
 4. Перезагрузите игру (F5) и зайдите в квантовое поселение. Справа появится коричневая кнопка с кристаллом.
 
