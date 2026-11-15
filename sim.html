@@ -1313,7 +1313,7 @@ window.QISim = { Sim, DEFS, speedShards };
     if (st === 'ProductionFinishedState') b.push('<button id="b-col">Собрать</button>');
     if (!imp && !th) b.push('<button id="b-dem">Снести (+' + fmt(d.rm) + ' мон.)</button>');
     if (!imp) b.push('<button id="b-mov">Перенести</button>');
-    if (st === 'ConstructionState' || (st === 'ProducingState' && !th)) { const c = QISim.speedShards(d, st !== 'ConstructionState'); if (c) b.push('<button id="b-spd">Ускорить: ' + c + ' осколков</button>'); }
+    if (st === 'ConstructionState' || (st === 'ProducingState' && !th && !/Catapult|Siege/i.test(e.cityentity_id))) { const c = QISim.speedShards(d, st !== 'ConstructionState'); if (c) b.push('<button id="b-spd">Ускорить: ' + c + ' осколков</button>'); }
     if (/Ropery/.test(e.cityentity_id) && sim.built(e)) b.push('<button id="b-rope">20 верёвок (70 000 мон. + 56 000 мол.)</button>');
     if (/Catapult|Siege/i.test(e.cityentity_id) && st === 'IdleState') b.push('<button id="b-cat">Катапульты ×10 (35 000 + 28 000)</button>');
     if (/Catapult|Siege/i.test(e.cityentity_id) && st === 'ProductionFinishedState') b.push('<button id="b-catc">Забрать катапульты</button>');
@@ -1325,7 +1325,7 @@ window.QISim = { Sim, DEFS, speedShards };
     const mv = $('#b-mov'); if (mv) mv.addEventListener('click', () => { pickUp(e); render(); });
     on('#b-spd', () => speed(e), 'Ускорено');
     on('#b-rope', () => sim.ropes(1), '+20 верёвок');
-    on('#b-cat', () => { const R = sim.res; if (R.guild_raids_money < 35000 || R.guild_raids_supplies < 28000) return 'не хватает ресурсов'; R.guild_raids_money -= 35000; R.guild_raids_supplies -= 28000; e.state = { __class__: 'ProducingState', next_state_transition_at: sim.t + 60, productionOption: { time: 60 } }; return null; }, 'Катапульты строятся');
+    on('#b-cat', () => { const R = sim.res; if (R.guild_raids_money < 35000 || R.guild_raids_supplies < 28000) return 'не хватает ресурсов'; R.guild_raids_money -= 35000; R.guild_raids_supplies -= 28000; e.state = { __class__: 'ProductionFinishedState' };   /* в игре — секунды: сразу готово */ return null; }, 'Катапульты готовы — заберите');
     on('#b-catc', () => { army += 10; e.state = { __class__: 'IdleState' }; return null; }, '+10 катапульт');
     on('#b-imp', () => { const c = sim.impCost; const r = payShards(c) || sim.removeImpediment(e.id); if (!r) sel = null; return r; }, 'Препятствие убрано');
   }
@@ -1367,7 +1367,7 @@ window.QISim = { Sim, DEFS, speedShards };
     if (k === 'speed') { const e = sim.ents.get(id); return e ? speed(e) : 'нет здания'; }
     if (k === 'imp') return payShards(sim.impCost) || sim.removeImpediment(id);
     if (k === 'gexpand' && n.tile) return sim.expand(n.tile.x, n.tile.y, true);
-    if (k === 'produce') { const e = sim.ents.get(id); if (e && /Ropery/.test(e.cityentity_id)) return sim.ropes(1); if (e && /Catapult|Siege/i.test(e.cityentity_id)) { const R = sim.res; if (R.guild_raids_money < 35000 || R.guild_raids_supplies < 28000) return 'не хватает ресурсов'; R.guild_raids_money -= 35000; R.guild_raids_supplies -= 28000; e.state = { __class__: 'ProducingState', next_state_transition_at: sim.t + 60, productionOption: { time: 60 } }; return null; } return 'stop'; }
+    if (k === 'produce') { const e = sim.ents.get(id); if (e && /Ropery/.test(e.cityentity_id)) return sim.ropes(1); if (e && /Catapult|Siege/i.test(e.cityentity_id)) { const R = sim.res; if (R.guild_raids_money < 35000 || R.guild_raids_supplies < 28000) return 'не хватает ресурсов'; R.guild_raids_money -= 35000; R.guild_raids_supplies -= 28000; e.state = { __class__: 'ProductionFinishedState' };   /* в игре — секунды: сразу готово */ return null; } return 'stop'; }
     if (k === 'collect' && id != null) { const e = sim.ents.get(id); if (e && /Catapult|Siege/i.test(e.cityentity_id) && sim.ready(e)) { army += 10; e.state = { __class__: 'IdleState' }; return null; } return sim.collect(id); }
     if (k === 'collect' && /дома|все ресурсы|монеты|молотки/.test(txt) && !/Ждите/.test(txt)) {
       let c = 0; sim.ents.forEach((e) => { const d = DEFS[e.cityentity_id] || {}; if (!sim.ready(e) || /Catapult|Siege/i.test(e.cityentity_id)) return; if (/молотки/.test(txt) ? d.s : /все ресурсы/.test(txt) ? true : (d.m || e.cityentity_id.startsWith('H_'))) { sim.collect(e.id); c++; } });
