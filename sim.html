@@ -28,7 +28,7 @@ details summary{cursor:pointer}
 </div>
 <main>
 <div id="pal"></div>
-<div><canvas id="map"></canvas><div class="dim">Левый клик — собрать готовое здание / выбрать здание или участок «+». Delete — снести выбранное. <b>Правый клик по зданию — взять для переноса, левый клик — поставить.</b> «🧺 Сбор» / «🔨 Снос» — левый клик по зданиям, правый — выход. Esc — отмена. Ctrl+Z — отменить ход.</div></div>
+<div><canvas id="map"></canvas><div class="dim">Левый клик — собрать готовое здание / выбрать здание или участок «+». <b>Ctrl + правый клик — снести</b> (или Delete для выбранного). <b>Правый клик по зданию — взять для переноса, левый клик — поставить.</b> «🧺 Сбор» / «🔨 Снос» — левый клик по зданиям, правый — выход. Esc — отмена. Ctrl+Z — отменить ход.</div></div>
 <div id="side">
 <div id="hh">Помощник…</div>
 <div id="sel"></div>
@@ -1198,6 +1198,11 @@ window.QISim = { Sim, DEFS, speedShards };
   // правый клик по зданию — взять для переноса, левый клик — поставить; правый клик по пустому месту — отмена
   cv.addEventListener('contextmenu', (ev) => {
     ev.preventDefault(); if (tool) { tool = null; msg = ''; render(); return; }
+    if (ev.ctrlKey && !placing && !moving) {   // Ctrl + правый клик — снести здание
+      const c0 = cellOf(ev), e0 = entAt(c0.x, c0.y);
+      if (e0) { const d = DEFS[e0.cityentity_id] || {}; act(() => { if (sim.ready(e0) && d.m) sim.collect(e0.id); const r = sim.demolish(e0.id); if (!r && sel && sel.id === e0.id) sel = null; return r; }, 'Снесено: ' + d.n + ' (+' + fmt(d.rm) + ' мон.)'); }
+      return;
+    }
     const c = cellOf(ev); const e = !placing && !moving && entAt(c.x, c.y);
     placing = null; moving = null;
     if (e && !e.cityentity_id.startsWith('I_')) { moving = e; grab = { x: c.x - e.x, y: c.y - e.y }; sel = null; hover = c; msg = 'Перенос: ' + (DEFS[e.cityentity_id] || {}).n + ' — левый клик, куда поставить'; }
