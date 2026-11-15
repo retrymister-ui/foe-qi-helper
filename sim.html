@@ -1122,7 +1122,7 @@ window.QISim = { Sim, DEFS, speedShards };
   function changed() { window.qiSim.ver++; save(); render(); }
 
   // помощнику: снимок города, время, бонусы
-  window.qiSim = { ver: 1, pid: PID, get t() { return sim.t; }, get seasonEnd() { return T0 + SEASON; }, get ext() { return { c: opts.extC, s: opts.extS }; }, get army() { return army; }, dump: () => sim.dump() };
+  window.qiSim = { ver: 1, pid: PID, get t() { return sim.t; }, get seasonEnd() { return T0 + SEASON; }, get ext() { return { c: opts.extC, s: opts.extS }; }, get army() { return army; }, diaBudget: 200000, dump: () => sim.dump() };
 
   // ---------- ресурсы с доплатой бриллиантами ----------
   // лоты игры: 100 осколков — 120 💎, 250 — 280 💎, 1000 — 1050 💎; докупаем самый дешёвый набор, покрывающий нехватку
