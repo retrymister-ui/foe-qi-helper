@@ -1202,7 +1202,7 @@ window.QISim = { Sim, DEFS, speedShards };
   });
   cv.addEventListener('click', (ev) => {
     const c = cellOf(ev);
-    if (placing) { const t = placing; act(() => sim.place(t, c.x, c.y), 'Поставлено: ' + DEFS[t].n); if (!ev.shiftKey) placing = null; render(); return; }
+    if (placing) { const t = placing; act(() => sim.place(t, c.x, c.y), 'Поставлено: ' + DEFS[t].n + ' — можно ставить ещё, правый клик — отмена'); render(); return; }   // здание остаётся на мышке
     if (moving) { const e = moving, d = DEFS[e.cityentity_id]; moving = null; act(() => sim.move(e.id, c.x - grab.x, c.y - grab.y), 'Перенесено: ' + d.n); return; }
     const e = entAt(c.x, c.y);
     if (e) { sel = e; render(); return; }
