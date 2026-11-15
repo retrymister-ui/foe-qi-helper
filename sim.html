@@ -24,7 +24,7 @@ details summary{cursor:pointer}
 <div id="bar">
 <span class="g"><button id="t10m">+10 мин</button><button id="t1">Ускорить 1 час</button><button id="t12">Ускорить 12 часов</button><button id="tev">До следующего события</button></span>
 <span class="g"><button id="cm">Собрать монеты (дома)</button><button id="cs">Собрать молотки</button><button id="ca">Собрать всё</button></span>
-<span class="g"><button id="auto" title="Выполнить подсказки помощника подряд, пока не нужно ждать. Отменяется одной кнопкой «Отменить ход».">▶ Застроить по плану помощника</button><button id="tcol">🧺 Сбор</button><button id="tdem">🔨 Снос</button><button id="undo">↶ Отменить ход</button><button id="game" title="Вернуть город, присланный из игры кнопкой «🧪 В тренажёр»">↺ Как в игре</button></span>
+<span class="g"><button id="auto" title="Выполнить подсказки помощника подряд, пока не нужно ждать. Отменяется одной кнопкой «Отменить ход».">▶ Застроить по плану помощника</button><button id="tcol">🧺 Сбор</button><button id="tdem">🔨 Снос</button><button id="undo">↶ Отменить ход</button><button id="game" title="Вернуть город, присланный из игры кнопкой «🧪 В тренажёр»">↺ Как в игре</button><button id="toGame" title="Отправить эту раскладку помощнику в игре: он покажет, что снести, перенести и поставить, чтобы город стал таким">↗ В игру как мой план</button></span>
 <span class="g"><span class="dim">Осколки:</span><button class="lot" data-i="0">100 — 120 💎</button><button class="lot" data-i="1">250 — 280 💎</button><button class="lot" data-i="2">1000 — 1050 💎</button></span>
 <span id="msg" class="dim"></span>
 </div>
@@ -1460,6 +1460,15 @@ window.QISim = { Sim, DEFS, speedShards };
   $('#t1').onclick = () => skip(3600); $('#t12').onclick = () => skip(12 * 3600); $('#t10m').onclick = () => skip(600); $('#tev').onclick = nextEvent;
   $('#cm').onclick = () => collectAll('m'); $('#cs').onclick = () => collectAll('s'); $('#ca').onclick = () => collectAll('a');
   $('#undo').onclick = doUndo;
+  // «В игру как мой план»: раскладка тренажёра уходит помощнику в игре (окно, из которого открыт тренажёр)
+  $('#toGame').onclick = () => {
+    if (!window.opener) { msg = '⚠ откройте тренажёр кнопкой «🧪 В тренажёр» из игры — тогда план уйдёт в то окно'; render(); return; }
+    if (moving) cancelMove();
+    const list = [...sim.ents.values()].map((e) => ({ t: e.cityentity_id, x: e.x, y: e.y }));
+    try { window.opener.postMessage({ type: 'qiPlanSet', list, areas: sim.areas.map((a) => ({ x: a.x, y: a.y })) }, '*'); msg = '↗ План отправлен в игру: ' + list.length + ' зданий. В окне помощника в игре — «Мой план из тренажёра».'; }
+    catch (e) { msg = '⚠ не удалось отправить: окно игры закрыто?'; }
+    render();
+  };
   $('#own').onclick = () => {   // свой город: номер аккаунта для ключа, демо-ограничение снимается (нужен ключ этого аккаунта)
     const pid = parseInt($('#o-pid').value, 10); if (!(pid > 1)) { msg = '⚠ введите номер аккаунта (число из заявки помощника)'; render(); return; }
     act(() => { opts.ownPid = pid; opts.pid = pid; sim.ents.forEach((e) => { e.player_id = pid; }); return null; }, 'Свой город: аккаунт ' + pid + ' — помощник попросит ключ этого аккаунта');
