@@ -28,7 +28,7 @@ details summary{cursor:pointer}
 </div>
 <main>
 <div id="pal"></div>
-<div><canvas id="map"></canvas><div class="dim">Левый клик — собрать готовое здание / выбрать здание или участок «+». <b>Ctrl + правый клик — снести</b> (или Delete для выбранного). <b>Правый клик по зданию — взять, левый клик — поставить; если на месте другое здание — оно встаёт на мышку (цепочка), Esc — вернуть всю цепочку.</b> «🧺 Сбор» / «🔨 Снос» — левый клик по зданиям, правый — выход. Esc — отмена. Ctrl+Z — отменить ход.</div></div>
+<div><canvas id="map"></canvas><div class="dim">Левый клик — собрать готовое здание / выбрать здание или участок «+». <b>Shift + левый клик — ускорить</b>. <b>Ctrl + правый клик — снести</b> (или Delete для выбранного). <b>Правый клик по зданию — взять, левый клик — поставить; если на месте другое здание — оно встаёт на мышку (цепочка), Esc — вернуть всю цепочку.</b> «🧺 Сбор» / «🔨 Снос» — левый клик по зданиям, правый — выход. Esc — отмена. Ctrl+Z — отменить ход.</div></div>
 <div id="side">
 <div id="hh">Помощник…</div>
 <div id="sel"></div>
@@ -1236,6 +1236,12 @@ window.QISim = { Sim, DEFS, speedShards };
       const d = DEFS[e.cityentity_id] || {};
       if (tool === 'col') act(() => (/Catapult|Siege/i.test(e.cityentity_id) ? 'нечего' : sim.collect(e.id)), 'Собрано: ' + d.n);
       else act(() => { if (sim.ready(e) && d.m) sim.collect(e.id); return sim.demolish(e.id); }, 'Снесено: ' + d.n + ' (+' + fmt(d.rm) + ' мон.)');
+      return;
+    }
+    if (e && ev.shiftKey) {   // Shift + левый клик — ускорить стройку или производство (за осколки, при нехватке — 💎)
+      const st = e.state && e.state.__class__;
+      if (st === 'ConstructionState' || (st === 'ProducingState' && !e.cityentity_id.startsWith('H_'))) { sel = e; act(() => speed(e), 'Ускорено: ' + (DEFS[e.cityentity_id] || {}).n); }
+      else { msg = '⚠ ускорять нечего'; render(); }
       return;
     }
     if (e) {   // обычный режим: готовое здание собирается сразу левым кликом, иначе — карточка
