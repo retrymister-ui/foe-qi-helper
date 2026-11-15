@@ -39,7 +39,7 @@ details summary{cursor:pointer}
 <div style="display:grid;grid-template-columns:auto auto;gap:4px 8px;margin-top:6px">
 <span>Монеты на старте</span><input id="o-m"><span>Молотки на старте</span><input id="o-s"><span>Осколки</span><input id="o-sh">
 <span>Бонус города к монетам (0.2 = 20%)</span><input id="o-ec"><span>Бонус города к молоткам</span><input id="o-es">
-</div><div style="margin-top:6px">Если не хватает осколков: <select id="o-buy"><option value="ask">спрашивать (купить пакет кнопкой)</option><option value="1000">сразу пакет 1000</option><option value="cheap">сразу самый дешёвый набор</option></select></div><div class="btns"><button id="new">Начать сезон заново</button></div>
+</div><div style="margin-top:8px">Свой город (по ключу): номер аккаунта <input id="o-pid" placeholder="из заявки"> <button id="own">Включить</button><div class="dim">Демо-сезон: подсказки помощника бесплатно первые 2 дня. Свой город — присланный из игры кнопкой «🧪 В тренажёр» или введённый вручную с номером аккаунта — по ключу этого аккаунта.</div></div><div style="margin-top:6px">Если не хватает осколков: <select id="o-buy"><option value="ask">спрашивать (купить пакет кнопкой)</option><option value="1000">сразу пакет 1000</option><option value="cheap">сразу самый дешёвый набор</option></select></div><div class="btns"><button id="new">Начать сезон заново</button></div>
 <div class="dim">Ускорения, расширения и препятствия — всегда за осколки. Если осколков не хватает, они сразу докупаются самым дешёвым набором лотов игры (100 — 120 💎, 250 — 280 💎, 1000 — 1050 💎) (бриллианты бесконечные) — счётчик «💎 потрачено» вверху.</div></details></div>
 </div>
 </main>
@@ -1125,7 +1125,7 @@ window.QISim = { Sim, DEFS, speedShards };
   function changed() { window.qiSim.ver++; save(); render(); }
 
   // помощнику: снимок города, время, бонусы
-  window.qiSim = { ver: 1, get pid() { return (opts && opts.pid) || 1; }, get t() { return sim.t; }, get seasonEnd() { return end(); }, get ext() { return { c: opts.extC, s: opts.extS }; }, get army() { return army + armyCan; }, get collN() { return coll.n; }, get diaBudget() { return opts && opts.fromGame ? Math.max(opts.diaBudget || 0, 200000) : 200000; }, dump: () => sim.dump() };
+  window.qiSim = { ver: 1, get pid() { return (opts && opts.pid) || 1; }, get t() { return sim.t; }, get seasonEnd() { return end(); }, get ext() { return { c: opts.extC, s: opts.extS }; }, get army() { return army + armyCan; }, get collN() { return coll.n; }, get demo() { return !(opts && (opts.fromGame || opts.ownPid)); }, get demoUntil() { return t0() + 2 * 86400; }, get diaBudget() { return opts && opts.fromGame ? Math.max(opts.diaBudget || 0, 200000) : 200000; }, dump: () => sim.dump() };
 
   // ---------- ресурсы с доплатой бриллиантами ----------
   // лоты игры: 100 осколков — 120 💎, 250 — 280 💎, 1000 — 1050 💎; докупаем самый дешёвый набор, покрывающий нехватку
@@ -1435,6 +1435,7 @@ window.QISim = { Sim, DEFS, speedShards };
     // настройки помощника из игры (стратегия, пекарни, армия…) — тому же помощнику на странице тренажёра
     try { const H = window.foeQiHelper; const c0 = JSON.parse(localStorage.getItem('foeQiHelperCfg') || '{}'); const nc = { ...c0, ...(g.cfg || {}), speedNo: undefined, speedDone: undefined, final: undefined };
       localStorage.setItem('foeQiHelperCfg', JSON.stringify(nc)); if (H && H.cfg) Object.assign(H.cfg, g.cfg || {}, { speedNo: undefined, speedDone: undefined, final: undefined }); } catch (e) { /* */ }
+    try { const L = 'foeQiHelperLic', have = JSON.parse(localStorage.getItem(L) || '[]'); (g.lic || []).forEach((t) => { if (!have.includes(t)) have.push(t); }); localStorage.setItem(L, JSON.stringify(have)); } catch (e) { /* */ }
     gameSnap = snap(); try { localStorage.setItem(LS + 'Game', gameSnap); } catch (e) { /* */ }
     msg = 'Загружен город из игры (' + clock(sim.t) + '). «↺ Как в игре» — вернуться к нему.'; changed();
   }
@@ -1459,6 +1460,10 @@ window.QISim = { Sim, DEFS, speedShards };
   $('#t1').onclick = () => skip(3600); $('#t12').onclick = () => skip(12 * 3600); $('#t10m').onclick = () => skip(600); $('#tev').onclick = nextEvent;
   $('#cm').onclick = () => collectAll('m'); $('#cs').onclick = () => collectAll('s'); $('#ca').onclick = () => collectAll('a');
   $('#undo').onclick = doUndo;
+  $('#own').onclick = () => {   // свой город: номер аккаунта для ключа, демо-ограничение снимается (нужен ключ этого аккаунта)
+    const pid = parseInt($('#o-pid').value, 10); if (!(pid > 1)) { msg = '⚠ введите номер аккаунта (число из заявки помощника)'; render(); return; }
+    act(() => { opts.ownPid = pid; opts.pid = pid; sim.ents.forEach((e) => { e.player_id = pid; }); return null; }, 'Свой город: аккаунт ' + pid + ' — помощник попросит ключ этого аккаунта');
+  };
   $('#game').onclick = () => { const g = gameSnap || localStorage.getItem(LS + 'Game'); if (!g) { msg = 'Города из игры нет: нажмите «🧪 В тренажёр» в помощнике в игре'; render(); return; } if (moving) cancelMove(); undo.push(snap()); restore(g); msg = '↺ Город как в игре'; changed(); }; document.querySelectorAll('.lot').forEach((b) => { b.onclick = () => buyLot(+b.dataset.i); });
   $('#o-buy').onchange = () => { opts.buy = $('#o-buy').value; save(); }; $('#auto').onclick = autoPlan;
   const setTool = (t) => { if (moving) cancelMove(); tool = tool === t ? null : t; placing = null; moving = null; sel = null; msg = tool === 'col' ? 'Сбор: левый клик по зданию — собрать, правый клик — выход' : tool === 'dem' ? 'Снос: левый клик по зданию — снести, правый клик — выход' : ''; render(); };
@@ -1471,7 +1476,7 @@ window.QISim = { Sim, DEFS, speedShards };
   };
   try { const s = localStorage.getItem(LS); if (s) restore(s); } catch (e) { sim = null; }
   if (!sim) { opts = { ...defaults(), end: T0d + SEASON }; sim = newSim(opts); hookSim(); }
-  $('#o-buy').value = opts.buy || 'ask'; $('#o-m').value = opts.money; $('#o-s').value = opts.supplies; $('#o-sh').value = opts.shards; $('#o-ec').value = opts.extC; $('#o-es').value = opts.extS; 
+  $('#o-buy').value = opts.buy || 'ask'; $('#o-pid').value = opts.ownPid || ''; $('#o-m').value = opts.money; $('#o-s').value = opts.supplies; $('#o-sh').value = opts.shards; $('#o-ec').value = opts.extC; $('#o-es').value = opts.extS; 
   setInterval(() => { readHint(); draw(); }, 700);
   render();
 })();
