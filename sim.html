@@ -4,9 +4,9 @@
 <style>
 body{margin:0;background:#1b2027;color:#dde3ea;font:13px/1.35 system-ui,sans-serif}
 header{padding:8px 12px;background:#232a33;border-bottom:1px solid #333c47;display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center}
-#res{display:flex;flex-wrap:wrap;gap:4px 16px}header h1{font-size:15px;margin:0 8px 0 0}
+#res{max-width:1160px;display:flex;flex-wrap:wrap;gap:4px 16px}header h1{font-size:15px;margin:0 8px 0 0}
 .r b{color:#9fb0c3;font-weight:500}.dim{color:#8a96a5;font-size:12px}
-#bar{padding:6px 12px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;border-bottom:1px solid #2c343e}
+#bar{padding:6px 12px;display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;border-bottom:1px solid #2c343e;max-width:1160px}.g{display:flex;gap:5px;align-items:center;flex-wrap:wrap}
 button{background:#33404f;color:#e6ecf2;border:1px solid #4a5868;border-radius:5px;padding:4px 9px;cursor:pointer;font:inherit}
 button:hover{background:#3e4e60}button:disabled{opacity:.4;cursor:default}button.on{background:#7a5a17;border-color:#c79a3a}
 main{display:grid;grid-template-columns:210px min-content minmax(320px,420px);gap:10px;padding:10px;justify-content:start}
@@ -17,14 +17,16 @@ main{display:grid;grid-template-columns:210px min-content minmax(320px,420px);ga
 .btns{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}
 table{border-collapse:collapse;width:100%}td,th{padding:2px 5px;text-align:right;border-bottom:1px solid #2f3843}td:first-child,th:first-child{text-align:left}
 select{background:#141920;color:#dde3ea;border:1px solid #4a5868;border-radius:4px}input{width:80px;background:#141920;color:#dde3ea;border:1px solid #4a5868;border-radius:4px;padding:2px 4px}
-#msg{flex:1;min-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#hh{border-left:4px solid #ff9f1a}
+#msg{flex-basis:100%;min-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#hh{border-left:4px solid #ff9f1a}
 details summary{cursor:pointer}
 </style></head><body>
 <header><h1>КВ тренажёр</h1><span id="res"></span></header>
 <div id="bar">
-<button id="t10m">+10 мин</button><button id="t1">Ускорить 1 час</button><button id="t12">Ускорить 12 часов</button><button id="tev">До следующего события</button>
-<span style="width:12px"></span><button id="cm">Собрать монеты (дома)</button><button id="cs">Собрать молотки</button><button id="ca">Собрать всё</button>
-<span style="width:12px"></span><button id="auto" title="Выполнить подсказки помощника подряд, пока не нужно ждать. Отменяется одной кнопкой «Отменить ход».">▶ Застроить по плану помощника</button><button id="tcol">🧺 Сбор</button><button id="tdem">🔨 Снос</button><span style="width:12px"></span><span class="dim">Осколки:</span><button class="lot" data-i="0">100 — 120 💎</button><button class="lot" data-i="1">250 — 280 💎</button><button class="lot" data-i="2">1000 — 1050 💎</button><span style="width:12px"></span><button id="undo">↶ Отменить ход</button><span id="msg" class="dim"></span>
+<span class="g"><button id="t10m">+10 мин</button><button id="t1">Ускорить 1 час</button><button id="t12">Ускорить 12 часов</button><button id="tev">До следующего события</button></span>
+<span class="g"><button id="cm">Собрать монеты (дома)</button><button id="cs">Собрать молотки</button><button id="ca">Собрать всё</button></span>
+<span class="g"><button id="auto" title="Выполнить подсказки помощника подряд, пока не нужно ждать. Отменяется одной кнопкой «Отменить ход».">▶ Застроить по плану помощника</button><button id="tcol">🧺 Сбор</button><button id="tdem">🔨 Снос</button><button id="undo">↶ Отменить ход</button></span>
+<span class="g"><span class="dim">Осколки:</span><button class="lot" data-i="0">100 — 120 💎</button><button class="lot" data-i="1">250 — 280 💎</button><button class="lot" data-i="2">1000 — 1050 💎</button></span>
+<span id="msg" class="dim"></span>
 </div>
 <main>
 <div id="pal"></div>
