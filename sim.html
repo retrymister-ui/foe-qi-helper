@@ -24,7 +24,7 @@ details summary{cursor:pointer}
 <div id="bar">
 <span class="g"><button id="t10m">+10 мин</button><button id="t1">Ускорить 1 час</button><button id="t12">Ускорить 12 часов</button><button id="tev">До следующего события</button></span>
 <span class="g"><button id="cm">Собрать монеты (дома)</button><button id="cs">Собрать молотки</button><button id="ca">Собрать всё</button></span>
-<span class="g"><button id="auto" title="Выполнить подсказки помощника подряд, пока не нужно ждать. Отменяется одной кнопкой «Отменить ход».">▶ Застроить по плану помощника</button><button id="tcol">🧺 Сбор</button><button id="tdem">🔨 Снос</button><button id="undo">↶ Отменить ход</button><button id="game" title="Вернуть город, присланный из игры кнопкой «🧪 В тренажёр»">↺ Как в игре</button><button id="toGame" title="Отправить эту раскладку помощнику в игре: он покажет, что снести, перенести и поставить, чтобы город стал таким">↗ В игру как мой план</button></span>
+<span class="g"><button id="auto" title="Выполнить подсказки помощника подряд, пока не нужно ждать. Отменяется одной кнопкой «Отменить ход».">▶ Застроить по плану помощника</button><button id="tcol">🧺 Сбор</button><button id="tdem">🔨 Снос</button><button id="undo">↶ Отменить ход</button><button id="game" title="Вернуть город, присланный из игры кнопкой «🧪 В тренажёр»">↺ Как в игре</button><button id="stAdd" title="Запомнить текущую раскладку как этап плана (один этап — на один сбор)">＋ Этап</button><button id="stClr" title="Очистить этапы">✕</button><button id="toGame" title="Отправить эту раскладку помощнику в игре: он покажет, что снести, перенести и поставить, чтобы город стал таким">↗ В игру как мой план</button></span>
 <span class="g"><span class="dim">Осколки:</span><button class="lot" data-i="0">100 — 120 💎</button><button class="lot" data-i="1">250 — 280 💎</button><button class="lot" data-i="2">1000 — 1050 💎</button></span>
 <span id="msg" class="dim"></span>
 </div>
@@ -1461,11 +1461,18 @@ window.QISim = { Sim, DEFS, speedShards };
   $('#cm').onclick = () => collectAll('m'); $('#cs').onclick = () => collectAll('s'); $('#ca').onclick = () => collectAll('a');
   $('#undo').onclick = doUndo;
   // «В игру как мой план»: раскладка тренажёра уходит помощнику в игре (окно, из которого открыт тренажёр)
+  // несколько этапов вперёд: «＋ Этап» запоминает текущую раскладку; помощник ведёт по этапам — по одному на сбор
+  let stages = []; try { stages = JSON.parse(localStorage.getItem(LS + 'Stages') || '[]'); } catch (e) { stages = []; }
+  const layout = () => ({ label: clock(sim.t), list: [...sim.ents.values()].map((e) => ({ t: e.cityentity_id, x: e.x, y: e.y })), areas: sim.areas.map((a) => ({ x: a.x, y: a.y })) });
+  const stLabel = () => { $('#toGame').textContent = stages.length ? '↗ В игру: ' + stages.length + ' этап(а)' : '↗ В игру как мой план'; $('#stClr').style.display = stages.length ? '' : 'none'; };
+  $('#stAdd').onclick = () => { if (moving) cancelMove(); stages.push(layout()); try { localStorage.setItem(LS + 'Stages', JSON.stringify(stages)); } catch (e) { /* */ } msg = '＋ Этап ' + stages.length + ' запомнен (' + clock(sim.t) + '). Перемотайте к следующему сбору и сделайте следующий.'; stLabel(); render(); };
+  $('#stClr').onclick = () => { stages = []; try { localStorage.removeItem(LS + 'Stages'); } catch (e) { /* */ } msg = 'Этапы плана очищены'; stLabel(); render(); };
+  stLabel();
   $('#toGame').onclick = () => {
     if (!window.opener) { msg = '⚠ откройте тренажёр кнопкой «🧪 В тренажёр» из игры — тогда план уйдёт в то окно'; render(); return; }
     if (moving) cancelMove();
     const list = [...sim.ents.values()].map((e) => ({ t: e.cityentity_id, x: e.x, y: e.y }));
-    try { window.opener.postMessage({ type: 'qiPlanSet', list, areas: sim.areas.map((a) => ({ x: a.x, y: a.y })) }, '*'); msg = '↗ План отправлен в игру: ' + list.length + ' зданий. В окне помощника в игре — «Мой план из тренажёра».'; }
+    try { window.opener.postMessage({ type: 'qiPlanSet', list, areas: sim.areas.map((a) => ({ x: a.x, y: a.y })), stages: stages.length ? stages : null }, '*'); msg = stages.length ? '↗ План из ' + stages.length + ' этап(ов) отправлен в игру — по одному на сбор.' : '↗ План отправлен в игру: ' + list.length + ' зданий. В окне помощника в игре — «Мой план из тренажёра».'; }
     catch (e) { msg = '⚠ не удалось отправить: окно игры закрыто?'; }
     render();
   };
