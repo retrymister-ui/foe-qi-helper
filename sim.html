@@ -28,7 +28,7 @@ details summary{cursor:pointer}
 </div>
 <main>
 <div id="pal"></div>
-<div><canvas id="map"></canvas><div class="dim">Левый клик — выбрать здание или участок «+». <b>Правый клик по зданию — взять для переноса, левый клик — поставить.</b> «🧺 Сбор» / «🔨 Снос» — левый клик по зданиям, правый — выход. Esc — отмена. Ctrl+Z — отменить ход.</div></div>
+<div><canvas id="map"></canvas><div class="dim">Левый клик — собрать готовое здание / выбрать здание или участок «+». Delete — снести выбранное. <b>Правый клик по зданию — взять для переноса, левый клик — поставить.</b> «🧺 Сбор» / «🔨 Снос» — левый клик по зданиям, правый — выход. Esc — отмена. Ctrl+Z — отменить ход.</div></div>
 <div id="side">
 <div id="hh">Помощник…</div>
 <div id="sel"></div>
@@ -1214,7 +1214,11 @@ window.QISim = { Sim, DEFS, speedShards };
       else act(() => { if (sim.ready(e) && d.m) sim.collect(e.id); return sim.demolish(e.id); }, 'Снесено: ' + d.n + ' (+' + fmt(d.rm) + ' мон.)');
       return;
     }
-    if (e) { sel = e; render(); return; }
+    if (e) {   // обычный режим: готовое здание собирается сразу левым кликом, иначе — карточка
+      sel = e; const d = DEFS[e.cityentity_id] || {};
+      if (sim.ready(e) && !/Catapult|Siege/i.test(e.cityentity_id)) { act(() => sim.collect(e.id), 'Собрано: ' + d.n); return; }
+      render(); return;
+    }
     const t = ALL_TILES.find((t) => c.x >= t.x && c.x < t.x + 4 && c.y >= t.y && c.y < t.y + 4);
     sel = null;
     if (t && tileFree(t) && tileNear(t)) { sel = { tile: t }; }
@@ -1224,6 +1228,10 @@ window.QISim = { Sim, DEFS, speedShards };
     if (ev.target.tagName === 'INPUT') return;
     if (ev.key === 'Escape') { placing = null; moving = null; sel = null; tool = null; render(); }
     if (ev.key === 'z' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); doUndo(); }
+    if ((ev.key === 'Delete' || ev.key === 'Backspace') && sel && sel.id && sim.ents.has(sel.id)) {   // Delete — снести выбранное здание
+      ev.preventDefault(); const e = sim.ents.get(sel.id), d = DEFS[e.cityentity_id] || {};
+      act(() => { if (sim.ready(e) && d.m) sim.collect(e.id); const r = sim.demolish(e.id); if (!r) sel = null; return r; }, 'Снесено: ' + d.n);
+    }
   });
 
   // ---------- панели ----------
