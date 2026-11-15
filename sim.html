@@ -16,7 +16,7 @@ main{display:grid;grid-template-columns:210px auto 1fr;gap:10px;padding:10px}
 #side>div{background:#232a33;border-radius:6px;padding:8px;margin-bottom:8px}
 .btns{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}
 table{border-collapse:collapse;width:100%}td,th{padding:2px 5px;text-align:right;border-bottom:1px solid #2f3843}td:first-child,th:first-child{text-align:left}
-input{width:80px;background:#141920;color:#dde3ea;border:1px solid #4a5868;border-radius:4px;padding:2px 4px}
+select{background:#141920;color:#dde3ea;border:1px solid #4a5868;border-radius:4px}input{width:80px;background:#141920;color:#dde3ea;border:1px solid #4a5868;border-radius:4px;padding:2px 4px}
 #msg{flex:1;min-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#hh{border-left:4px solid #ff9f1a}
 details summary{cursor:pointer}
 </style></head><body>
@@ -24,7 +24,7 @@ details summary{cursor:pointer}
 <div id="bar">
 <button id="t10m">+10 мин</button><button id="t1">Ускорить 1 час</button><button id="t12">Ускорить 12 часов</button><button id="tev">До следующего события</button>
 <span style="width:12px"></span><button id="cm">Собрать монеты (дома)</button><button id="cs">Собрать молотки</button><button id="ca">Собрать всё</button>
-<span style="width:12px"></span><button id="auto" title="Выполнить подсказки помощника подряд, пока не нужно ждать. Отменяется одной кнопкой «Отменить ход».">▶ Застроить по плану помощника</button><button id="tcol">🧺 Сбор</button><button id="tdem">🔨 Снос</button><span style="width:12px"></span><button id="undo">↶ Отменить ход</button><span id="msg" class="dim"></span>
+<span style="width:12px"></span><button id="auto" title="Выполнить подсказки помощника подряд, пока не нужно ждать. Отменяется одной кнопкой «Отменить ход».">▶ Застроить по плану помощника</button><button id="tcol">🧺 Сбор</button><button id="tdem">🔨 Снос</button><span style="width:12px"></span><span class="dim">Осколки:</span><button class="lot" data-i="0">100 — 120 💎</button><button class="lot" data-i="1">250 — 280 💎</button><button class="lot" data-i="2">1000 — 1050 💎</button><span style="width:12px"></span><button id="undo">↶ Отменить ход</button><span id="msg" class="dim"></span>
 </div>
 <main>
 <div id="pal"></div>
@@ -37,7 +37,7 @@ details summary{cursor:pointer}
 <div style="display:grid;grid-template-columns:auto auto;gap:4px 8px;margin-top:6px">
 <span>Монеты на старте</span><input id="o-m"><span>Молотки на старте</span><input id="o-s"><span>Осколки</span><input id="o-sh">
 <span>Бонус города к монетам (0.2 = 20%)</span><input id="o-ec"><span>Бонус города к молоткам</span><input id="o-es">
-</div><div class="btns"><button id="new">Начать сезон заново</button></div>
+</div><div style="margin-top:6px">Если не хватает осколков: <select id="o-buy"><option value="ask">спрашивать (купить пакет кнопкой)</option><option value="1000">сразу пакет 1000</option><option value="cheap">сразу самый дешёвый набор</option></select></div><div class="btns"><button id="new">Начать сезон заново</button></div>
 <div class="dim">Ускорения, расширения и препятствия — всегда за осколки. Если осколков не хватает, они сразу докупаются самым дешёвым набором лотов игры (100 — 120 💎, 250 — 280 💎, 1000 — 1050 💎) (бриллианты бесконечные) — счётчик «💎 потрачено» вверху.</div></details></div>
 </div>
 </main>
@@ -1094,10 +1094,10 @@ window.QISim = { Sim, DEFS, speedShards };
   const ALL_TILES = []; for (let x = MIN; x < MAX; x += 4) for (let y = MIN; y < MAX; y += 4) ALL_TILES.push({ x, y });
   const COLORS = { residential: '#c9a86a', culture: '#8a6fd1', production: '#5aa36f', goods: '#4f8fcf', military: '#b55a5a', decoration: '#6d8f5e', main_building: '#d4b44a', impediment: '#6b5f55' };
 
-  let chain0 = null, msgExtra = ''; let grab = { x: 0, y: 0 }, tool = null, hint2 = null;   // tool: 'col' — сбор, 'dem' — снос (как в игре: инструмент остаётся, правый клик — выход)
+  let chain0 = null, msgExtra = '', shortShards = 0; let grab = { x: 0, y: 0 }, tool = null, hint2 = null;   // tool: 'col' — сбор, 'dem' — снос (как в игре: инструмент остаётся, правый клик — выход)
  let sim, opts, undo = [], diamonds = 0, army = 0, sel = null, placing = null, moving = null, hover = null, hint = null, msg = '';
 
-  function defaults() { return { money: 550000, supplies: 175000, shards: 1640, extC: 0.2, extS: 0.2 }; }
+  function defaults() { return { money: 550000, supplies: 175000, shards: 1640, extC: 0.2, extS: 0.2, buy: 'ask' }; }
   function newSim(o) {
     const ents = START.ents.map((e) => ({ ...e, player_id: PID, state: /Townhall/.test(e.cityentity_id)
       ? { __class__: 'ProducingState', next_state_transition_at: T0 + 36000, current_product: { product: { resources: { guild_raids_money: 50000, guild_raids_supplies: 50000, guild_raids_chrono_alloy: 15 } } } }
@@ -1133,15 +1133,19 @@ window.QISim = { Sim, DEFS, speedShards };
     }
     return best;
   }
-  function payShards(n) {   // не хватает осколков — сразу докупаем лотами за бриллианты (учёт в «💎 потрачено»)
-    const R = sim.res, lack = n - (R.guild_raids_currency || 0); if (lack <= 0) return;
-    const b = cheapest(lack); R.guild_raids_currency += b.n; diamonds += b.cost;
+  function payShards(n) {   // не хватает осколков: по настройке — спросить (купить пакет кнопкой наверху), сразу 1000 или самый дешёвый набор
+    const R = sim.res, lack = n - (R.guild_raids_currency || 0); if (lack <= 0) return null;
+    if (opts.buy === 'ask') { shortShards = lack; return 'не хватает ' + lack + ' осколков — купите пакет кнопкой наверху'; }
+    const b = opts.buy === 'cheap' ? cheapest(lack) : { n: Math.ceil(lack / 1000) * 1000, cost: Math.ceil(lack / 1000) * 1050, k: [0, 0, Math.ceil(lack / 1000)] };
+    R.guild_raids_currency += b.n; diamonds += b.cost;
     msgExtra = ' (докуплено ' + b.k.map((k, i) => k ? k + '×' + LOTS[i][0] : '').filter(Boolean).join(' + ') + ' осколков за ' + fmt(b.cost) + ' 💎)';
+    return null;
   }
+  function buyLot(i) { act(() => { sim.res.guild_raids_currency += LOTS[i][0]; diamonds += LOTS[i][1]; shortShards = 0; return null; }, 'Куплено ' + LOTS[i][0] + ' осколков за ' + fmt(LOTS[i][1]) + ' 💎'); }
   function speed(e) {
     const d = DEFS[e.cityentity_id]; const constr = !sim.built(e); const c = QISim.speedShards(d, !constr);
     if (!constr && !(e.state && e.state.__class__ === 'ProducingState')) return 'нечего ускорять';
-    payShards(c); return sim.speed(e.id);
+    const r = payShards(c); return r || sim.speed(e.id);
   }
   // ---------- время ----------
   function skip(sec) { act(() => { sim.advance(sec); return null; }, '⏩ +' + (sec >= 3600 ? sec / 3600 + ' ч' : Math.round(sec / 60) + ' мин')); }
@@ -1296,7 +1300,7 @@ window.QISim = { Sim, DEFS, speedShards };
     if (sel.tile) {
       const t = sel.tile;
       box.innerHTML = '<b>Участок ' + t.x + ',' + t.y + '</b><div><button id="b-exs">Купить за ' + (sim.expCosts[0] ?? '—') + ' осколков</button> <button id="b-exg">Купить за ' + (sim.goodsCosts[0] ?? '—') + ' верёвок</button></div>';
-      on('#b-exs', () => { const c = sim.expCosts[0]; if (c == null) return; payShards(c); return sim.expand(t.x, t.y, false); }, 'Участок куплен');
+      on('#b-exs', () => { const c = sim.expCosts[0]; if (c == null) return; return payShards(c) || sim.expand(t.x, t.y, false); }, 'Участок куплен');
       on('#b-exg', () => sim.expand(t.x, t.y, true), 'Участок куплен за товары');
       return;
     }
@@ -1321,7 +1325,7 @@ window.QISim = { Sim, DEFS, speedShards };
     on('#b-rope', () => sim.ropes(1), '+20 верёвок');
     on('#b-cat', () => { const R = sim.res; if (R.guild_raids_money < 35000 || R.guild_raids_supplies < 28000) return 'не хватает ресурсов'; R.guild_raids_money -= 35000; R.guild_raids_supplies -= 28000; e.state = { __class__: 'ProducingState', next_state_transition_at: sim.t + 60, productionOption: { time: 60 } }; return null; }, 'Катапульты строятся');
     on('#b-catc', () => { army += 10; e.state = { __class__: 'IdleState' }; return null; }, '+10 катапульт');
-    on('#b-imp', () => { const c = sim.impCost; payShards(c); const r = sim.removeImpediment(e.id); if (!r) sel = null; return r; }, 'Препятствие убрано');
+    on('#b-imp', () => { const c = sim.impCost; const r = payShards(c) || sim.removeImpediment(e.id); if (!r) sel = null; return r; }, 'Препятствие убрано');
   }
   function on(id, fn, label) { const el = $(id); if (el) el.addEventListener('click', () => act(fn, label)); }
   function collectAll(kind) {
@@ -1354,12 +1358,12 @@ window.QISim = { Sim, DEFS, speedShards };
   }
   function execStep(n, mode, tiles) {
     const k = n.kind, txt = n.text || '', id = n.ent && n.ent.id, to = n.to || n.pos;
-    if (mode === 'expand' && tiles && tiles.length) { const c = sim.expCosts[0]; if (c != null) payShards(c); return sim.expand(tiles[0].x, tiles[0].y, false); }
+    if (mode === 'expand' && tiles && tiles.length) { const c = sim.expCosts[0]; return (c != null && payShards(c)) || sim.expand(tiles[0].x, tiles[0].y, false); }
     if (k === 'place' || k === 'house' || k === 'bake' || k === 'brew' || k === 'church') { const t = n.t || (n.slot && n.slot.t) || TYPE_OF[k], sp = n.spot || n.slot; return sp ? sim.place(t, sp.x, sp.y) : 'нет места в подсказке'; }
     if (k === 'demolish') { const e = sim.ents.get(id); if (e && (DEFS[e.cityentity_id] || {}).m && sim.ready(e)) sim.collect(id); return sim.demolish(id); }
     if (k === 'relocate' || k === 'move') return to ? sim.move(id, to.x, to.y) : 'нет места';
     if (k === 'speed') { const e = sim.ents.get(id); return e ? speed(e) : 'нет здания'; }
-    if (k === 'imp') { payShards(sim.impCost); return sim.removeImpediment(id); }
+    if (k === 'imp') return payShards(sim.impCost) || sim.removeImpediment(id);
     if (k === 'gexpand' && n.tile) return sim.expand(n.tile.x, n.tile.y, true);
     if (k === 'produce') { const e = sim.ents.get(id); if (e && /Ropery/.test(e.cityentity_id)) return sim.ropes(1); if (e && /Catapult|Siege/i.test(e.cityentity_id)) { const R = sim.res; if (R.guild_raids_money < 35000 || R.guild_raids_supplies < 28000) return 'не хватает ресурсов'; R.guild_raids_money -= 35000; R.guild_raids_supplies -= 28000; e.state = { __class__: 'ProducingState', next_state_transition_at: sim.t + 60, productionOption: { time: 60 } }; return null; } return 'stop'; }
     if (k === 'collect' && id != null) { const e = sim.ents.get(id); if (e && /Catapult|Siege/i.test(e.cityentity_id) && sim.ready(e)) { army += 10; e.state = { __class__: 'IdleState' }; return null; } return sim.collect(id); }
@@ -1405,12 +1409,13 @@ window.QISim = { Sim, DEFS, speedShards };
     $('#sum').innerHTML = '<div class="grp">Состав</div>' + Object.entries(cnt).sort((a, b) => b[1] - a[1]).map(([n, k]) => '<div>' + n + ': <b>' + k + '</b></div>').join('') +
       '<div class="grp">Сборы по часам</div><table><tr><th>час</th><th>монеты</th><th>молотки</th><th>хроно</th></tr>' + rows + '</table>';
   }
-  function render() { topBar(); palette(); info(); readHint(); draw(); summary(); $('#msg').textContent = msg; $('#undo').disabled = !undo.length; $('#tcol').classList.toggle('on', tool === 'col'); $('#tdem').classList.toggle('on', tool === 'dem'); cv.style.cursor = tool === 'dem' ? 'not-allowed' : tool === 'col' ? 'pointer' : 'crosshair'; }
+  function render() { topBar(); palette(); info(); readHint(); draw(); summary(); $('#msg').textContent = msg; $('#undo').disabled = !undo.length; document.querySelectorAll('.lot').forEach((b) => b.classList.toggle('on', shortShards > 0)); $('#tcol').classList.toggle('on', tool === 'col'); $('#tdem').classList.toggle('on', tool === 'dem'); cv.style.cursor = tool === 'dem' ? 'not-allowed' : tool === 'col' ? 'pointer' : 'crosshair'; }
 
   // ---------- кнопки ----------
   $('#t1').onclick = () => skip(3600); $('#t12').onclick = () => skip(12 * 3600); $('#t10m').onclick = () => skip(600); $('#tev').onclick = nextEvent;
   $('#cm').onclick = () => collectAll('m'); $('#cs').onclick = () => collectAll('s'); $('#ca').onclick = () => collectAll('a');
-  $('#undo').onclick = doUndo; $('#auto').onclick = autoPlan;
+  $('#undo').onclick = doUndo; document.querySelectorAll('.lot').forEach((b) => { b.onclick = () => buyLot(+b.dataset.i); });
+  $('#o-buy').onchange = () => { opts.buy = $('#o-buy').value; save(); }; $('#auto').onclick = autoPlan;
   const setTool = (t) => { if (moving) cancelMove(); tool = tool === t ? null : t; placing = null; moving = null; sel = null; msg = tool === 'col' ? 'Сбор: левый клик по зданию — собрать, правый клик — выход' : tool === 'dem' ? 'Снос: левый клик по зданию — снести, правый клик — выход' : ''; render(); };
   $('#tcol').onclick = () => setTool('col'); $('#tdem').onclick = () => setTool('dem');
   $('#new').onclick = () => {
@@ -1421,7 +1426,7 @@ window.QISim = { Sim, DEFS, speedShards };
   };
   try { const s = localStorage.getItem(LS); if (s) restore(s); } catch (e) { sim = null; }
   if (!sim) { opts = defaults(); sim = newSim(opts); }
-  $('#o-m').value = opts.money; $('#o-s').value = opts.supplies; $('#o-sh').value = opts.shards; $('#o-ec').value = opts.extC; $('#o-es').value = opts.extS; 
+  $('#o-buy').value = opts.buy || 'ask'; $('#o-m').value = opts.money; $('#o-s').value = opts.supplies; $('#o-sh').value = opts.shards; $('#o-ec').value = opts.extC; $('#o-es').value = opts.extS; 
   setInterval(() => { readHint(); draw(); }, 700);
   render();
 })();
