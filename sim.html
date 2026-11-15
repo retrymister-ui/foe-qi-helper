@@ -1097,7 +1097,7 @@ window.QISim = { Sim, DEFS, speedShards };
   const COLORS = { residential: '#c9a86a', culture: '#8a6fd1', production: '#5aa36f', goods: '#4f8fcf', military: '#b55a5a', decoration: '#6d8f5e', main_building: '#d4b44a', impediment: '#6b5f55' };
 
   let chain0 = null, msgExtra = '', shortShards = 0; let grab = { x: 0, y: 0 }, tool = null, hint2 = null;   // tool: 'col' — сбор, 'dem' — снос (как в игре: инструмент остаётся, правый клик — выход)
- let sim, opts, undo = [], diamonds = 0, army = 0, sel = null, placing = null, moving = null, hover = null, hint = null, msg = '';
+ let sim, opts, undo = [], diamonds = 0, army = 0, armyCan = 0, sel = null, placing = null, moving = null, hover = null, hint = null, msg = '';
 
   function defaults() { return { money: 550000, supplies: 175000, shards: 1640, extC: 0.2, extS: 0.2, buy: 'ask' }; }
   function newSim(o) {
@@ -1107,10 +1107,10 @@ window.QISim = { Sim, DEFS, speedShards };
     return new QISim.Sim({ t: T0, ents, areas: START.areas, blocked: START.blocked, ext: { c: o.extC, s: o.extS },
       res: { guild_raids_money: o.money, guild_raids_supplies: o.supplies, guild_raids_chrono_alloy: 0, guild_raids_currency: o.shards, guild_raids_rope: 0 } });
   }
-  const snap = () => JSON.stringify({ d: sim.dump(), next: sim.nextId, collects: sim.collects.length, diamonds, army, opts });
+  const snap = () => JSON.stringify({ d: sim.dump(), next: sim.nextId, collects: sim.collects.length, diamonds, army, armyCan, opts });
   function restore(js) {
     const o = JSON.parse(js); opts = { ...defaults(), ...(o.opts || {}) };
-    sim = QISim.Sim.fromDump(o.d, { c: opts.extC, s: opts.extS }); sim.nextId = o.next || sim.nextId; diamonds = o.diamonds || 0; army = o.army || 0;
+    sim = QISim.Sim.fromDump(o.d, { c: opts.extC, s: opts.extS }); sim.nextId = o.next || sim.nextId; diamonds = o.diamonds || 0; army = o.army || 0; armyCan = o.armyCan || 0;
   }
   function save() { try { localStorage.setItem(LS, snap()); } catch (e) { /* нет места */ } }
   function act(fn, label) {   // любое действие игрока: с отменой
@@ -1122,7 +1122,7 @@ window.QISim = { Sim, DEFS, speedShards };
   function changed() { window.qiSim.ver++; save(); render(); }
 
   // помощнику: снимок города, время, бонусы
-  window.qiSim = { ver: 1, pid: PID, get t() { return sim.t; }, get seasonEnd() { return T0 + SEASON; }, get ext() { return { c: opts.extC, s: opts.extS }; }, get army() { return army; }, diaBudget: 200000, dump: () => sim.dump() };
+  window.qiSim = { ver: 1, pid: PID, get t() { return sim.t; }, get seasonEnd() { return T0 + SEASON; }, get ext() { return { c: opts.extC, s: opts.extS }; }, get army() { return army + armyCan; }, diaBudget: 200000, dump: () => sim.dump() };
 
   // ---------- ресурсы с доплатой бриллиантами ----------
   // лоты игры: 100 осколков — 120 💎, 250 — 280 💎, 1000 — 1050 💎; докупаем самый дешёвый набор, покрывающий нехватку
@@ -1148,6 +1148,14 @@ window.QISim = { Sim, DEFS, speedShards };
     const d = DEFS[e.cityentity_id]; const constr = !sim.built(e); const c = QISim.speedShards(d, !constr);
     if (!constr && !(e.state && e.state.__class__ === 'ProducingState')) return 'нечего ускорять';
     const r = payShards(c); return r || sim.speed(e.id);
+  }
+  // армия: 10 юнитов за раз, готово сразу (в игре — секунды)
+  const UNITS = { W_GuildRaidsEarlyMiddleAge_Siegecamp: { n: 'катапульт', cm: 35000, cs: 28000, k: 'cat' }, W_GuildRaidsLateMiddleAge_Siegecamp: { n: 'пушек', cm: 49000, cs: 42000, k: 'can' } };
+  function buyArmy(e) {
+    const u = UNITS[e.cityentity_id]; if (!u) return 'здесь армию не купить'; if (!sim.built(e)) return 'мастерская ещё строится';
+    const R = sim.res; if (R.guild_raids_money < u.cm || R.guild_raids_supplies < u.cs) return 'не хватает ресурсов';
+    R.guild_raids_money -= u.cm; R.guild_raids_supplies -= u.cs; e.state = { __class__: 'IdleState' };
+    if (u.k === 'cat') army += 10; else armyCan += 10; return null;
   }
   // ---------- время ----------
   function skip(sec) { act(() => { sim.advance(sec); return null; }, '⏩ +' + (sec >= 3600 ? sec / 3600 + ' ч' : Math.round(sec / 60) + ' мин')); }
@@ -1283,7 +1291,7 @@ window.QISim = { Sim, DEFS, speedShards };
       ['Монеты', fmt(R.guild_raids_money)], ['Молотки', fmt(R.guild_raids_supplies)], ['Хроно', fmt(R.guild_raids_chrono_alloy)],
       ['Осколки', fmt(R.guild_raids_currency)], ['Верёвки', fmt(R.guild_raids_rope)], ['💎 потрачено', fmt(diamonds)],
       ['Эйфория', (isFinite(st.ratio) ? Math.round(st.ratio * 100) + '%' : '—') + ' <span class="dim">×' + st.mf + '</span>'],
-      ['Монеты ×', st.coinMul.toFixed(2)], ['Молотки ×', st.supMul.toFixed(2)], ['Свободных жителей', fmt(st.popFree)], ['Армия', fmt(army)],
+      ['Монеты ×', st.coinMul.toFixed(2)], ['Молотки ×', st.supMul.toFixed(2)], ['Свободных жителей', fmt(st.popFree)], ['Армия', 'катапульты ' + fmt(army) + ', пушки ' + fmt(armyCan)],
     ].map(([k, v]) => '<span class="r"><b>' + k + '</b> ' + v + '</span>').join('');
   }
   function palette() {
@@ -1315,8 +1323,7 @@ window.QISim = { Sim, DEFS, speedShards };
     if (!imp) b.push('<button id="b-mov">Перенести</button>');
     if (st === 'ConstructionState' || (st === 'ProducingState' && !th && !/Catapult|Siege/i.test(e.cityentity_id))) { const c = QISim.speedShards(d, st !== 'ConstructionState'); if (c) b.push('<button id="b-spd">Ускорить: ' + c + ' осколков</button>'); }
     if (/Ropery/.test(e.cityentity_id) && sim.built(e)) b.push('<button id="b-rope">20 верёвок (70 000 мон. + 56 000 мол.)</button>');
-    if (/Catapult|Siege/i.test(e.cityentity_id) && st === 'IdleState') b.push('<button id="b-cat">Катапульты ×10 (35 000 + 28 000)</button>');
-    if (/Catapult|Siege/i.test(e.cityentity_id) && st === 'ProductionFinishedState') b.push('<button id="b-catc">Забрать катапульты</button>');
+    if (UNITS[e.cityentity_id] && sim.built(e)) { const u = UNITS[e.cityentity_id]; b.push('<button id="b-cat">Купить армию: 10 ' + u.n + ' (' + fmt(u.cm) + ' мон. + ' + fmt(u.cs) + ' мол.)</button>'); }
     if (imp) b.push('<button id="b-imp">Убрать за ' + sim.impCost + ' осколков</button>');
     box.innerHTML = '<b>' + (d.n || e.cityentity_id) + '</b> <span class="dim">#' + e.id + ' (' + e.x + ',' + e.y + ')</span><div>' + stTxt + '</div>' +
       '<div class="dim">' + [d.pop && 'жители ' + d.pop, d.eu && 'эйфория ' + d.eu, d.m && 'монеты ' + fmt(d.m), d.s && 'молотки ' + fmt(d.s), d.c && 'хроно ' + d.c, d.bm && 'бонус монет +' + d.bm * 100 + '%', d.bs && 'бонус молотков +' + d.bs * 100 + '%'].filter(Boolean).join(', ') + '</div><div class="btns">' + b.join('') + '</div>';
@@ -1325,8 +1332,7 @@ window.QISim = { Sim, DEFS, speedShards };
     const mv = $('#b-mov'); if (mv) mv.addEventListener('click', () => { pickUp(e); render(); });
     on('#b-spd', () => speed(e), 'Ускорено');
     on('#b-rope', () => sim.ropes(1), '+20 верёвок');
-    on('#b-cat', () => { const R = sim.res; if (R.guild_raids_money < 35000 || R.guild_raids_supplies < 28000) return 'не хватает ресурсов'; R.guild_raids_money -= 35000; R.guild_raids_supplies -= 28000; e.state = { __class__: 'ProductionFinishedState' };   /* в игре — секунды: сразу готово */ return null; }, 'Катапульты готовы — заберите');
-    on('#b-catc', () => { army += 10; e.state = { __class__: 'IdleState' }; return null; }, '+10 катапульт');
+    on('#b-cat', () => buyArmy(e), '+10 ' + ((UNITS[e.cityentity_id] || {}).n || ''));
     on('#b-imp', () => { const c = sim.impCost; const r = payShards(c) || sim.removeImpediment(e.id); if (!r) sel = null; return r; }, 'Препятствие убрано');
   }
   function on(id, fn, label) { const el = $(id); if (el) el.addEventListener('click', () => act(fn, label)); }
@@ -1367,7 +1373,7 @@ window.QISim = { Sim, DEFS, speedShards };
     if (k === 'speed') { const e = sim.ents.get(id); return e ? speed(e) : 'нет здания'; }
     if (k === 'imp') return payShards(sim.impCost) || sim.removeImpediment(id);
     if (k === 'gexpand' && n.tile) return sim.expand(n.tile.x, n.tile.y, true);
-    if (k === 'produce') { const e = sim.ents.get(id); if (e && /Ropery/.test(e.cityentity_id)) return sim.ropes(1); if (e && /Catapult|Siege/i.test(e.cityentity_id)) { const R = sim.res; if (R.guild_raids_money < 35000 || R.guild_raids_supplies < 28000) return 'не хватает ресурсов'; R.guild_raids_money -= 35000; R.guild_raids_supplies -= 28000; e.state = { __class__: 'ProductionFinishedState' };   /* в игре — секунды: сразу готово */ return null; } return 'stop'; }
+    if (k === 'produce') { const e = sim.ents.get(id); if (e && /Ropery/.test(e.cityentity_id)) return sim.ropes(1); if (e && UNITS[e.cityentity_id]) return buyArmy(e); return 'stop'; }
     if (k === 'collect' && id != null) { const e = sim.ents.get(id); if (e && /Catapult|Siege/i.test(e.cityentity_id) && sim.ready(e)) { army += 10; e.state = { __class__: 'IdleState' }; return null; } return sim.collect(id); }
     if (k === 'collect' && /дома|все ресурсы|монеты|молотки/.test(txt) && !/Ждите/.test(txt)) {
       let c = 0; sim.ents.forEach((e) => { const d = DEFS[e.cityentity_id] || {}; if (!sim.ready(e) || /Catapult|Siege/i.test(e.cityentity_id)) return; if (/молотки/.test(txt) ? d.s : /все ресурсы/.test(txt) ? true : (d.m || e.cityentity_id.startsWith('H_'))) { sim.collect(e.id); c++; } });
@@ -1424,7 +1430,7 @@ window.QISim = { Sim, DEFS, speedShards };
     const o = defaults(); const f = (id, k) => { const v = parseFloat($(id).value); if (isFinite(v)) o[k] = v; };
     f('#o-m', 'money'); f('#o-s', 'supplies'); f('#o-sh', 'shards'); f('#o-ec', 'extC'); f('#o-es', 'extS'); 
     if (!confirm('Начать сезон заново? Текущий город пропадёт.')) return;
-    opts = o; sim = newSim(o); undo = []; diamonds = 0; army = 0; sel = null; msg = 'Новый сезон'; changed();
+    opts = o; sim = newSim(o); undo = []; diamonds = 0; army = 0; armyCan = 0; sel = null; msg = 'Новый сезон'; changed();
   };
   try { const s = localStorage.getItem(LS); if (s) restore(s); } catch (e) { sim = null; }
   if (!sim) { opts = defaults(); sim = newSim(opts); }
