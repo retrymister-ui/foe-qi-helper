@@ -1,0 +1,1319 @@
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8"><title>КВ тренажёр</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+body{margin:0;background:#1b2027;color:#dde3ea;font:13px/1.35 system-ui,sans-serif}
+header{padding:8px 12px;background:#232a33;border-bottom:1px solid #333c47;display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center}
+#res{display:flex;flex-wrap:wrap;gap:4px 16px}header h1{font-size:15px;margin:0 8px 0 0}
+.r b{color:#9fb0c3;font-weight:500}.dim{color:#8a96a5;font-size:12px}
+#bar{padding:6px 12px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;border-bottom:1px solid #2c343e}
+button{background:#33404f;color:#e6ecf2;border:1px solid #4a5868;border-radius:5px;padding:4px 9px;cursor:pointer;font:inherit}
+button:hover{background:#3e4e60}button:disabled{opacity:.4;cursor:default}button.on{background:#7a5a17;border-color:#c79a3a}
+main{display:grid;grid-template-columns:210px auto 1fr;gap:10px;padding:10px}
+#pal{max-height:calc(100vh - 150px);overflow:auto}.pb{display:flex;justify-content:space-between;gap:6px;width:100%;margin:2px 0;text-align:left;padding:3px 6px}
+.grp{margin:8px 0 3px;color:#c9a86a;font-weight:600}
+#map{background:#141920;border:1px solid #333c47;cursor:crosshair}
+#side>div{background:#232a33;border-radius:6px;padding:8px;margin-bottom:8px}
+.btns{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}
+table{border-collapse:collapse;width:100%}td,th{padding:2px 5px;text-align:right;border-bottom:1px solid #2f3843}td:first-child,th:first-child{text-align:left}
+input{width:80px;background:#141920;color:#dde3ea;border:1px solid #4a5868;border-radius:4px;padding:2px 4px}
+#hh{border-left:4px solid #ff9f1a}
+details summary{cursor:pointer}
+</style></head><body>
+<header><h1>КВ тренажёр</h1><span id="res"></span></header>
+<div id="bar">
+<button id="t10m">+10 мин</button><button id="t1">Ускорить 1 час</button><button id="t12">Ускорить 12 часов</button><button id="tev">До следующего события</button>
+<span style="width:12px"></span><button id="cm">Собрать монеты (дома)</button><button id="cs">Собрать молотки</button><button id="ca">Собрать всё</button>
+<span style="width:12px"></span><button id="undo">↶ Отменить ход</button><span id="msg" class="dim"></span>
+</div>
+<main>
+<div id="pal"></div>
+<div><canvas id="map"></canvas><div class="dim">Клик — выбрать здание или участок «+». Правый клик / Esc — отмена. Ctrl+Z — отменить ход.</div></div>
+<div id="side">
+<div id="hh">Помощник…</div>
+<div id="sel"></div>
+<div id="sum"></div>
+<div><details><summary>Новый сезон / настройки</summary>
+<div style="display:grid;grid-template-columns:auto auto;gap:4px 8px;margin-top:6px">
+<span>Монеты на старте</span><input id="o-m"><span>Молотки на старте</span><input id="o-s"><span>Осколки</span><input id="o-sh">
+<span>Бонус города к монетам (0.2 = 20%)</span><input id="o-ec"><span>Бонус города к молоткам</span><input id="o-es"><span>💎 за 1 осколок</span><input id="o-dr">
+</div><div class="btns"><button id="new">Начать сезон заново</button></div>
+<div class="dim">Бриллианты бесконечные: если осколков не хватает, недостаток докупается бриллиантами по курсу выше — счётчик «💎 потрачено» вверху.</div></details></div>
+</div>
+</main>
+<script>// Ядро калькулятора сбора (Квантовые вторжения). Работает и в браузере, и в node (для тестов).
+(function (root) {
+  const MOOD = [[0, 0.2, 'Восстание'], [0.21, 0.6, 'Непокорный'], [0.61, 0.8, 'Несчастный'], [0.81, 1.0, 'Нейтральный'],
+    [1.21, 1.1, 'Содержание'], [1.41, 1.2, 'Счастье'], [2.0, 1.5, 'Энтузиаст']];
+
+  function moodFactor(sup, dem) {
+    if (dem <= 0) return 1.5;
+    const r = sup / dem;
+    let f = 0.2;
+    for (const [t, v] of MOOD) if (r >= t - 1e-9) f = v;
+    return f;
+  }
+
+  /**
+   * p.houses: до 3 типов [{name, count, base, chrono, pop, boost, cost, refund}]
+   * p.church: {euph, cost, refund, cells}
+   * p.freeCells, p.houseCells (4), p.cityBoost (доля), p.formula 'add'|'mul'
+   * p.minRatio — минимальное отношение эйфории к спросу перед финальным сбором (1.5 = 150%)
+   * p.maxFactor — не подниматься выше этого множителя (1.2 = не идти в «Энтузиаст»)
+   * p.rebuild — вычитать стоимость пересборки снесённых домов (цена − возврат)
+   * p.chronoValue — сколько монет стоит 1 хроно (для выбора лучшего плана)
+   * p.popFree — свободные жители (ограничивает снос домов), необязательно
+   * p.supply0 — эйфория, которая уже есть (культура, декор), p.fixed — дома, которые не трогаем: {pop, boost, base, chrono}
+   */
+  function plan(p) {
+    const H = p.houses.filter((h) => h.count > 0).map((h) => ({ ...h }));
+    if (H.length > 3) throw new Error('Можно до 3 типов домов одновременно');
+    while (H.length < 3) H.push({ name: '-', count: 0, base: 0, chrono: 0, pop: 0, boost: 0, cost: 0, refund: 0 });
+    const ch = p.church;
+    const W = p.chronoValue || 0;
+    const F = p.fixed || { pop: 0, boost: 0, base: 0, chrono: 0 };
+    const S0 = p.supply0 || 0;
+    const n = H.map((h) => h.count);
+    const N0 = n[0] + 1, N1 = n[1] + 1, N2 = n[2] + 1;
+    const maxC = Math.floor((p.freeCells + p.houseCells * (n[0] + n[1] + n[2])) / ch.cells);
+    const NC = maxC + 1;
+    const size = N0 * N1 * N2 * NC;
+    const idx = (a, b, d, c) => ((a * N1 + b) * N2 + d) * NC + c;
+
+    const coins = new Float64Array(size), chrono = new Float64Array(size), spent = new Float64Array(size),
+      refund = new Float64Array(size), score = new Float64Array(size).fill(-Infinity);
+    const prev = new Int32Array(size).fill(-1), act = new Int8Array(size).fill(-1); // act: 3=церковь, 0..2=снос типа
+    score[idx(0, 0, 0, 0)] = 0;
+
+    function state(a, b, d, c) {
+      const left = [n[0] - a, n[1] - b, n[2] - d];
+      const dem = F.pop + left[0] * H[0].pop + left[1] * H[1].pop + left[2] * H[2].pop;
+      const mf = moodFactor(S0 + c * ch.euph, dem);
+      const boost = (p.cityBoost || 0) + F.boost + left[0] * H[0].boost + left[1] * H[1].boost + left[2] * H[2].boost;
+      const coinMul = p.formula === 'mul' ? mf * (1 + boost) : mf + boost;
+      return { left, dem, mf, coinMul, ratio: dem > 0 ? (S0 + c * ch.euph) / dem : Infinity };
+    }
+
+    let ans = null;
+    const h0 = H[0], h1 = H[1], h2 = H[2];
+    const cb = (p.cityBoost || 0) + F.boost, mulF = p.formula === 'mul';
+    let curK = 0;
+    const go = (k2, cc, chh, sp, rf, code) => {
+      const sc = cc + rf - sp + W * chh;
+      if (sc > score[k2] + 1e-6) { score[k2] = sc; coins[k2] = cc; chrono[k2] = chh; spent[k2] = sp; refund[k2] = rf; prev[k2] = curK; act[k2] = code; }
+    };
+    for (let c = 0; c < NC; c++) for (let a = 0; a < N0; a++) for (let b = 0; b < N1; b++) for (let d = 0; d < N2; d++) {
+      const k = idx(a, b, d, c);
+      if (score[k] === -Infinity) continue;
+      curK = k;
+      const l0 = n[0] - a, l1 = n[1] - b, l2 = n[2] - d;
+      const dem = F.pop + l0 * h0.pop + l1 * h1.pop + l2 * h2.pop;
+      const sup = S0 + c * ch.euph;
+      const mf = moodFactor(sup, dem);
+      const boost = cb + l0 * h0.boost + l1 * h1.boost + l2 * h2.boost;
+      const coinMul = mulF ? mf * (1 + boost) : mf + boost;
+      const ratio = dem > 0 ? sup / dem : Infinity;
+      const free = p.freeCells + p.houseCells * (a + b + d) - c * ch.cells;
+
+      if (ratio >= p.minRatio - 1e-9 && mf <= p.maxFactor + 1e-9) {
+        const fc = coins[k] + F.base * coinMul + (l0 * h0.base + l1 * h1.base + l2 * h2.base) * coinMul;
+        const fch = chrono[k] + F.chrono * mf + (l0 * h0.chrono + l1 * h1.chrono + l2 * h2.chrono) * mf;
+        const rebuild = p.rebuild ? a * (h0.cost - h0.refund) + b * (h1.cost - h1.refund) + d * (h2.cost - h2.refund) : 0;
+        // церкви после сбора сносятся: возврат их цены
+        const net = fc + refund[k] - spent[k] + c * ch.refund - (p.rebuild ? a * h0.refund + b * h1.refund + d * h2.refund : 0) - rebuild;
+        const value = net + W * fch + (p.prodMood || 0) * mf;   // производства собираются при том же настроении
+        // при почти равной выгоде (разница < 1%) — вариант, где больше хроно
+        const near = ans && Math.abs(value - ans.value) <= 0.01 * Math.abs(ans.value);
+        if (!ans || (near ? fch > ans.chrono + 1e-6 || (Math.abs(fch - ans.chrono) <= 1e-6 && value > ans.value + 1e-6) : value > ans.value + 1e-6)) ans = { value, net, coins: fc, chrono: fch, spent: spent[k], refund: refund[k], rebuild, k, D: [a, b, d], c, s: state(a, b, d, c) };
+      }
+
+      if (c + 1 < NC && free >= ch.cells) go(idx(a, b, d, c + 1), coins[k], chrono[k], spent[k] + ch.cost, refund[k], 3);
+      // снести дом игра даёт, только если свободных жителей хватает (p.popFree — свободные сейчас)
+      const pf = p.popFree == null ? Infinity : p.popFree - (a * h0.pop + b * h1.pop + d * h2.pop);
+      if (a < n[0] && h0.pop <= pf) go(idx(a + 1, b, d, c), coins[k] + h0.base * coinMul + c * 1e-3, chrono[k] + h0.chrono * mf, spent[k], refund[k] + h0.refund, 0);
+      if (b < n[1] && h1.pop <= pf) go(idx(a, b + 1, d, c), coins[k] + h1.base * coinMul + c * 1e-3, chrono[k] + h1.chrono * mf, spent[k], refund[k] + h1.refund, 1);
+      if (d < n[2] && h2.pop <= pf) go(idx(a, b, d + 1, c), coins[k] + h2.base * coinMul + c * 1e-3, chrono[k] + h2.chrono * mf, spent[k], refund[k] + h2.refund, 2);
+    }
+    if (!ans) return null;
+
+    // восстановление шагов
+    const raw = [];
+    for (let k = ans.k; prev[k] >= 0; k = prev[k]) raw.push({ k, code: act[k], from: prev[k] });
+    raw.reverse();
+    const decode = (k) => { const c = k % NC; let r = (k - c) / NC; const d = r % N2; r = (r - d) / N2; const b = r % N1; const a = (r - b) / N1; return [a, b, d, c]; };
+    const steps = raw.map(({ k, code, from }) => {
+      const [a, b, d, c] = decode(from);
+      const sBefore = state(a, b, d, c);
+      const [a2, b2, d2, c2] = decode(k);
+      const sAfter = state(a2, b2, d2, c2);
+      if (code === 3) return { type: 'church', ratio: sAfter.ratio, mf: sAfter.mf };
+      return { type: 'demolish', house: H[code].name, houseId: H[code].id, got: H[code].base * sBefore.coinMul, gotChrono: H[code].chrono * sBefore.mf, mf: sBefore.mf, ratioAfter: sAfter.ratio };
+    });
+    const groups = [];
+    for (const s of steps) {
+      const g = groups[groups.length - 1];
+      if (s.type === 'demolish' && g && g.type === 'demolish') g.items.push(s);
+      else groups.push(s.type === 'demolish' ? { type: 'demolish', items: [s] } : s);
+    }
+    const s0 = state(0, 0, 0, 0);
+    const noAction = F.base * s0.coinMul + H.reduce((sum, h) => sum + h.count * h.base * s0.coinMul, 0);
+    const noActionChrono = F.chrono * s0.mf + H.reduce((sum, h) => sum + h.count * h.chrono * s0.mf, 0);
+    return { ...ans, steps, groups, noAction, noActionChrono, houses: H };
+  }
+
+  root.QIPlanner = { plan, moodFactor, MOOD };
+  if (typeof module !== 'undefined') module.exports = root.QIPlanner;
+})(typeof window !== 'undefined' ? window : globalThis);
+</script>
+<script>window.QI_DEFS={
+ "H_GuildRaidsEarlyMiddleAge_Townhall": {
+  "n": "Ратуша",
+  "w": 6,
+  "h": 7,
+  "cat": "main_building"
+ },
+ "I_GuildRaidsEarlyMiddleAge_Impediment1": {
+  "n": "Препятствие",
+  "w": 1,
+  "h": 2,
+  "cat": "impediment"
+ },
+ "I_GuildRaidsEarlyMiddleAge_Impediment2": {
+  "n": "Препятствие",
+  "w": 2,
+  "h": 1,
+  "cat": "impediment"
+ },
+ "W_GuildRaidsEarlyMiddleAge_Residential1": {
+  "n": "Многоэтажный дом",
+  "w": 2,
+  "h": 2,
+  "pop": 70,
+  "m": 12500,
+  "c": 10,
+  "cm": 10000,
+  "cs": 0,
+  "cc": 0,
+  "rm": 2500,
+  "t": 5,
+  "cat": "residential"
+ },
+ "W_GuildRaidsEarlyMiddleAge_Residential2": {
+  "n": "Каркасный дом",
+  "w": 2,
+  "h": 2,
+  "pop": 110,
+  "m": 25000,
+  "c": 75,
+  "cm": 30000,
+  "cs": 50000,
+  "cc": 200,
+  "rm": 7500,
+  "t": 3600,
+  "cat": "residential"
+ },
+ "W_GuildRaidsEarlyMiddleAge_Residential3": {
+  "n": "Дом с гонтовой кровлей",
+  "w": 2,
+  "h": 2,
+  "pop": 150,
+  "m": 130000,
+  "c": 250,
+  "cm": 210000,
+  "cs": 200000,
+  "cc": 1000,
+  "rm": 52500,
+  "t": 36000,
+  "cat": "residential"
+ },
+ "W_GuildRaidsHighMiddleAge_Residential1": {
+  "n": "Особняк",
+  "w": 2,
+  "h": 2,
+  "pop": 60,
+  "m": 7500,
+  "c": 10,
+  "bm": 0.1,
+  "cm": 14000,
+  "cs": 0,
+  "cc": 0,
+  "rm": 3500,
+  "t": 5,
+  "cat": "residential"
+ },
+ "W_GuildRaidsHighMiddleAge_Residential2": {
+  "n": "Дом из песчаника",
+  "w": 2,
+  "h": 2,
+  "pop": 90,
+  "m": 15000,
+  "c": 75,
+  "bm": 0.1,
+  "cm": 42000,
+  "cs": 60000,
+  "cc": 200,
+  "rm": 10500,
+  "t": 3600,
+  "cat": "residential"
+ },
+ "W_GuildRaidsHighMiddleAge_Residential3": {
+  "n": "Городской особняк",
+  "w": 2,
+  "h": 2,
+  "pop": 130,
+  "m": 78000,
+  "c": 250,
+  "bm": 0.1,
+  "cm": 294000,
+  "cs": 240000,
+  "cc": 1000,
+  "rm": 73500,
+  "t": 36000,
+  "cat": "residential"
+ },
+ "W_GuildRaidsLateMiddleAge_Residential1": {
+  "n": "Усадьба",
+  "w": 2,
+  "h": 2,
+  "pop": 50,
+  "m": 3750,
+  "c": 10,
+  "bm": 0.2,
+  "cm": 16000,
+  "cs": 0,
+  "cc": 0,
+  "rm": 4000,
+  "t": 5,
+  "cat": "residential"
+ },
+ "W_GuildRaidsLateMiddleAge_Residential2": {
+  "n": "Многоквартирный дом",
+  "w": 2,
+  "h": 2,
+  "pop": 80,
+  "m": 7500,
+  "c": 75,
+  "bm": 0.2,
+  "cm": 48000,
+  "cs": 70000,
+  "cc": 200,
+  "rm": 12000,
+  "t": 3600,
+  "cat": "residential"
+ },
+ "W_GuildRaidsLateMiddleAge_Residential3": {
+  "n": "Манор",
+  "w": 2,
+  "h": 2,
+  "pop": 110,
+  "m": 39000,
+  "c": 250,
+  "bm": 0.2,
+  "cm": 336000,
+  "cs": 280000,
+  "cc": 1000,
+  "rm": 84000,
+  "t": 36000,
+  "cat": "residential"
+ },
+ "W_GuildRaidsEarlyMiddleAge_Bakery": {
+  "n": "Пекарня",
+  "w": 3,
+  "h": 4,
+  "pop": -120,
+  "s": 60000,
+  "c": 250,
+  "cm": 84000,
+  "cs": 100000,
+  "cc": 1000,
+  "rm": 21000,
+  "t": 36000,
+  "cat": "production"
+ },
+ "W_GuildRaidsEarlyMiddleAge_Shoemaker": {
+  "n": "Обувная мастерская",
+  "w": 3,
+  "h": 3,
+  "pop": -60,
+  "s": 24000,
+  "c": 75,
+  "cm": 36000,
+  "cs": 50000,
+  "cc": 200,
+  "rm": 9000,
+  "t": 3600,
+  "cat": "production"
+ },
+ "W_GuildRaidsEarlyMiddleAge_Tannery": {
+  "n": "Кожевня",
+  "w": 3,
+  "h": 3,
+  "pop": -30,
+  "s": 12000,
+  "c": 10,
+  "cm": 12000,
+  "cs": 0,
+  "cc": 0,
+  "rm": 3000,
+  "t": 5,
+  "cat": "production"
+ },
+ "W_GuildRaidsHighMiddleAge_Alchimist": {
+  "n": "Лаборатория алхимика",
+  "w": 2,
+  "h": 3,
+  "pop": -60,
+  "s": 14400,
+  "c": 75,
+  "bs": 0.1,
+  "cm": 50400,
+  "cs": 60000,
+  "cc": 200,
+  "rm": 12600,
+  "t": 3600,
+  "cat": "production"
+ },
+ "W_GuildRaidsHighMiddleAge_Brickworks": {
+  "n": "Кирпичный цех",
+  "w": 3,
+  "h": 4,
+  "pop": -100,
+  "cm": 45000,
+  "cs": 22500,
+  "cc": 200,
+  "rm": 11250,
+  "t": 3600,
+  "cat": "goods"
+ },
+ "W_GuildRaidsHighMiddleAge_Ropery": {
+  "n": "Канатная мастерская",
+  "w": 2,
+  "h": 3,
+  "pop": -100,
+  "cm": 45000,
+  "cs": 22500,
+  "cc": 200,
+  "rm": 11250,
+  "t": 3600,
+  "cat": "goods"
+ },
+ "W_GuildRaidsLateMiddleAge_Gunpowder": {
+  "n": "Пороховая фабрика",
+  "w": 3,
+  "h": 3,
+  "pop": -100,
+  "cm": 45000,
+  "cs": 22500,
+  "cc": 200,
+  "rm": 11250,
+  "t": 3600,
+  "cat": "goods"
+ },
+ "W_GuildRaidsEarlyMiddleAge_Galgen": {
+  "n": "Виселица",
+  "w": 2,
+  "h": 2,
+  "eu": 250,
+  "cm": 36000,
+  "cs": 36000,
+  "cc": 100,
+  "rm": 9000,
+  "t": 3600,
+  "cat": "culture"
+ },
+ "W_GuildRaidsEarlyMiddleAge_Marketplace": {
+  "n": "Торговая площадь",
+  "w": 3,
+  "h": 3,
+  "eu": 125,
+  "cm": 12000,
+  "cs": 0,
+  "cc": 0,
+  "rm": 3000,
+  "t": 5,
+  "cat": "culture"
+ },
+ "W_GuildRaidsEarlyMiddleAge_Pranger": {
+  "n": "Позорный столб",
+  "w": 2,
+  "h": 2,
+  "eu": 750,
+  "cm": 120000,
+  "cs": 120000,
+  "cc": 500,
+  "rm": 30000,
+  "t": 36000,
+  "cat": "culture",
+  "qa": 120,
+  "qcap": 0
+ },
+ "W_GuildRaidsHighMiddleAge_Church": {
+  "n": "Церковь",
+  "w": 3,
+  "h": 3,
+  "eu": 160,
+  "cm": 16800,
+  "cs": 0,
+  "cc": 0,
+  "rm": 4200,
+  "t": 5,
+  "cat": "culture"
+ },
+ "W_GuildRaidsEarlyMiddleAge_Cypress": {
+  "n": "Кипарис",
+  "w": 1,
+  "h": 1,
+  "eu": -25,
+  "cm": 50000,
+  "cs": 50000,
+  "cc": 200,
+  "rm": 12500,
+  "t": 5,
+  "cat": "decoration"
+ },
+ "W_GuildRaidsEarlyMiddleAge_Hedgewithflowers": {
+  "n": "Цветочная изгородь",
+  "w": 1,
+  "h": 1,
+  "eu": -25,
+  "cm": 50000,
+  "cs": 50000,
+  "cc": 200,
+  "rm": 12500,
+  "t": 5,
+  "cat": "decoration"
+ },
+ "W_GuildRaidsEarlyMiddleAge_Pond": {
+  "n": "Пруд",
+  "w": 2,
+  "h": 2,
+  "eu": -75,
+  "cm": 200000,
+  "cs": 200000,
+  "cc": 750,
+  "rm": 50000,
+  "t": 5,
+  "cat": "decoration"
+ },
+ "W_GuildRaidsHighMiddleAge_Flag": {
+  "n": "Флаг",
+  "w": 1,
+  "h": 1,
+  "eu": -75,
+  "cm": 300000,
+  "cs": 250000,
+  "cc": 750,
+  "rm": 75000,
+  "t": 5,
+  "cat": "decoration"
+ },
+ "W_GuildRaidsHighMiddleAge_Doctor": {
+  "n": "Дом лекаря",
+  "w": 3,
+  "h": 3,
+  "eu": 1125,
+  "cm": 168000,
+  "cs": 144000,
+  "cc": 500,
+  "rm": 42000,
+  "t": 36000,
+  "cat": "culture",
+  "qa": 260,
+  "qcap": 1000
+ },
+ "W_GuildRaidsHighMiddleAge_Printshop": {
+  "n": "Типография",
+  "w": 3,
+  "h": 3,
+  "eu": 375,
+  "cm": 50400,
+  "cs": 43200,
+  "cc": 100,
+  "rm": 12600,
+  "t": 3600,
+  "cat": "culture"
+ },
+ "W_GuildRaidsLateMiddleAge_Cartographer": {
+  "n": "Дом картографа",
+  "w": 2,
+  "h": 3,
+  "eu": 900,
+  "cm": 192000,
+  "cs": 168000,
+  "cc": 500,
+  "rm": 48000,
+  "t": 36000,
+  "cat": "culture",
+  "qa": 180,
+  "qcap": 750
+ },
+ "W_GuildRaidsLateMiddleAge_Library": {
+  "n": "Библиотека",
+  "w": 4,
+  "h": 4,
+  "eu": 500,
+  "cm": 57600,
+  "cs": 50400,
+  "cc": 100,
+  "rm": 14400,
+  "t": 3600,
+  "cat": "culture"
+ },
+ "W_GuildRaidsLateMiddleAge_Palace": {
+  "n": "Дворец",
+  "w": 4,
+  "h": 4,
+  "eu": 225,
+  "cm": 19200,
+  "cs": 0,
+  "cc": 0,
+  "rm": 4800,
+  "t": 5,
+  "cat": "culture"
+ },
+ "W_GuildRaidsHighMiddleAge_Gargoyle": {
+  "n": "Горгулья",
+  "w": 1,
+  "h": 1,
+  "eu": -25,
+  "cm": 75000,
+  "cs": 62500,
+  "cc": 200,
+  "rm": 18750,
+  "t": 5,
+  "cat": "decoration"
+ },
+ "W_GuildRaidsLateMiddleAge_Decayedtower": {
+  "n": "Разрушенная башня",
+  "w": 2,
+  "h": 2,
+  "eu": -25,
+  "cm": 100000,
+  "cs": 75000,
+  "cc": 200,
+  "rm": 25000,
+  "t": 5,
+  "cat": "decoration",
+  "ar": 45
+ },
+ "W_GuildRaidsLateMiddleAge_Sailorstatue": {
+  "n": "Морская скульптура",
+  "w": 1,
+  "h": 1,
+  "eu": -75,
+  "cm": 400000,
+  "cs": 300000,
+  "cc": 750,
+  "rm": 100000,
+  "t": 5,
+  "cat": "decoration",
+  "ar": 30,
+  "ab": 30
+ },
+ "W_GuildRaidsHighMiddleAge_Signpost": {
+  "n": "Указательный столб",
+  "w": 1,
+  "h": 1,
+  "eu": -25,
+  "cm": 75000,
+  "cs": 62500,
+  "cc": 200,
+  "rm": 18750,
+  "t": 5,
+  "cat": "decoration"
+ },
+ "W_GuildRaidsLateMiddleAge_Treegroup": {
+  "n": "Группа деревьев",
+  "w": 2,
+  "h": 2,
+  "eu": -25,
+  "cm": 100000,
+  "cs": 75000,
+  "cc": 200,
+  "rm": 25000,
+  "t": 5,
+  "cat": "decoration",
+  "ab": 45
+ },
+ "W_GuildRaidsEarlyMiddleAge_Armoredswordsmsanbarracks": {
+  "n": "Казармы бронированной пехоты",
+  "w": 3,
+  "h": 3,
+  "pop": -100,
+  "cm": 15000,
+  "cs": 7500,
+  "cc": 0,
+  "rm": 3750,
+  "t": 5,
+  "cat": "military"
+ },
+ "W_GuildRaidsEarlyMiddleAge_Siegecamp": {
+  "n": "Мастерская катапульт",
+  "w": 3,
+  "h": 3,
+  "pop": -100,
+  "cm": 15000,
+  "cs": 7500,
+  "cc": 0,
+  "rm": 3750,
+  "t": 5,
+  "cat": "military"
+ },
+ "W_GuildRaidsEarlyMiddleAge_Stablecataphract": {
+  "n": "Конюшня для тяжелой кавалерии",
+  "w": 4,
+  "h": 3,
+  "pop": -100,
+  "cm": 15000,
+  "cs": 7500,
+  "cc": 0,
+  "rm": 3750,
+  "t": 5,
+  "cat": "military"
+ },
+ "W_GuildRaidsHighMiddleAge_Dismountedknight": {
+  "n": "Казармы тяжелой пехоты",
+  "w": 3,
+  "h": 3,
+  "pop": -100,
+  "cm": 45000,
+  "cs": 22500,
+  "cc": 200,
+  "rm": 11250,
+  "t": 3600,
+  "cat": "military"
+ },
+ "W_GuildRaidsHighMiddleAge_Siege": {
+  "n": "Мастерская требушетов",
+  "w": 3,
+  "h": 3,
+  "pop": -100,
+  "cm": 45000,
+  "cs": 22500,
+  "cc": 200,
+  "rm": 11250,
+  "t": 3600,
+  "cat": "military"
+ },
+ "W_GuildRaidsHighMiddleAge_Stable": {
+  "n": "Конюшня рыцарей",
+  "w": 4,
+  "h": 3,
+  "pop": -100,
+  "cm": 45000,
+  "cs": 22500,
+  "cc": 200,
+  "rm": 11250,
+  "t": 3600,
+  "cat": "military"
+ },
+ "W_GuildRaidsLateMiddleAge_Pikemanbarracks": {
+  "n": "Казармы королевских стражников",
+  "w": 4,
+  "h": 3,
+  "pop": -100,
+  "cm": 75000,
+  "cs": 37500,
+  "cc": 1000,
+  "rm": 18750,
+  "t": 36000,
+  "cat": "military"
+ },
+ "W_GuildRaidsLateMiddleAge_Siegecamp": {
+  "n": "Литейная пушек",
+  "w": 4,
+  "h": 3,
+  "pop": -100,
+  "cm": 75000,
+  "cs": 37500,
+  "cc": 1000,
+  "rm": 18750,
+  "t": 36000,
+  "cat": "military"
+ },
+ "W_GuildRaidsLateMiddleAge_Stable": {
+  "n": "Конюшня тяжеловооруженных рыцарей",
+  "w": 4,
+  "h": 4,
+  "pop": -100,
+  "cm": 75000,
+  "cs": 37500,
+  "cc": 1000,
+  "rm": 18750,
+  "t": 36000,
+  "cat": "military"
+ },
+ "W_GuildRaidsEarlyMiddleAge_BronzeFoundry": {
+  "n": "Литейная меди",
+  "w": 3,
+  "h": 4,
+  "pop": -100,
+  "cm": 45000,
+  "cs": 22500,
+  "cc": 200,
+  "rm": 11250,
+  "t": 3600,
+  "cat": "goods"
+ },
+ "W_GuildRaidsEarlyMiddleAge_Beekeeper": {
+  "n": "Пасека",
+  "w": 3,
+  "h": 3,
+  "pop": -100,
+  "cm": 45000,
+  "cs": 22500,
+  "cc": 200,
+  "rm": 11250,
+  "t": 3600,
+  "cat": "goods"
+ },
+ "W_GuildRaidsLateMiddleAge_BidenhnderMercenaryBarracks": {
+  "n": "Казармы воинов с двуручным мечом",
+  "w": 3,
+  "h": 3,
+  "pop": -100,
+  "cm": 75000,
+  "cs": 37500,
+  "cc": 1000,
+  "rm": 18750,
+  "t": 36000,
+  "cat": "military"
+ },
+ "W_GuildRaidsLateMiddleAge_Archeryrange": {
+  "n": "Стрельбище длиннолучников",
+  "w": 3,
+  "h": 3,
+  "pop": -100,
+  "cm": 75000,
+  "cs": 37500,
+  "cc": 1000,
+  "rm": 18750,
+  "t": 36000,
+  "cat": "military"
+ },
+ "W_GuildRaidsHighMiddleAge_Axehammer": {
+  "n": "Казармы берсерков",
+  "w": 3,
+  "h": 3,
+  "pop": -100,
+  "cm": 45000,
+  "cs": 22500,
+  "cc": 200,
+  "rm": 11250,
+  "t": 3600,
+  "cat": "military"
+ },
+ "W_GuildRaidsHighMiddleAge_Archery": {
+  "n": "Стрельбище арбалетчиков",
+  "w": 3,
+  "h": 3,
+  "pop": -100,
+  "cm": 45000,
+  "cs": 22500,
+  "cc": 200,
+  "rm": 11250,
+  "t": 3600,
+  "cat": "military"
+ },
+ "W_GuildRaidsEarlyMiddleAge_Spearmanbarracks": {
+  "n": "Казармы наемников",
+  "w": 3,
+  "h": 3,
+  "pop": -100,
+  "cm": 15000,
+  "cs": 7500,
+  "cc": 0,
+  "rm": 3750,
+  "t": 5,
+  "cat": "military"
+ },
+ "W_GuildRaidsEarlyMiddleAge_Archeryrange": {
+  "n": "Стрельбище конных лучников",
+  "w": 4,
+  "h": 3,
+  "pop": -100,
+  "cm": 15000,
+  "cs": 7500,
+  "cc": 0,
+  "rm": 3750,
+  "t": 5,
+  "cat": "military"
+ },
+ "H_GuildRaidsIronAge_Townhall": {
+  "n": "Ратуша",
+  "w": 6,
+  "h": 7,
+  "cat": "main_building"
+ },
+ "W_GuildRaidsHighMiddleAge_Wheatfarm": {
+  "n": "Ферма",
+  "w": 5,
+  "h": 4,
+  "pop": -30,
+  "s": 7200,
+  "c": 10,
+  "bs": 0.1,
+  "cm": 16800,
+  "cs": 0,
+  "cc": 0,
+  "rm": 4200,
+  "t": 5,
+  "cat": "production"
+ },
+ "W_GuildRaidsHighMiddleAge_Windmill": {
+  "n": "Ветряная мельница",
+  "w": 4,
+  "h": 3,
+  "pop": -120,
+  "s": 36000,
+  "c": 250,
+  "bs": 0.1,
+  "cm": 117600,
+  "cs": 120000,
+  "cc": 1000,
+  "rm": 29400,
+  "t": 36000,
+  "cat": "production"
+ },
+ "W_GuildRaidsLateMiddleAge_Barrelproducer": {
+  "n": "Бондарня",
+  "w": 4,
+  "h": 3,
+  "pop": -120,
+  "s": 24000,
+  "c": 250,
+  "bs": 0.2,
+  "cm": 134400,
+  "cs": 140000,
+  "cc": 1000,
+  "rm": 33600,
+  "t": 36000,
+  "cat": "production"
+ },
+ "W_GuildRaidsLateMiddleAge_Brewery": {
+  "n": "Пивоварня",
+  "w": 3,
+  "h": 3,
+  "pop": -30,
+  "s": 4800,
+  "c": 10,
+  "bs": 0.2,
+  "cm": 19200,
+  "cs": 0,
+  "cc": 0,
+  "rm": 4800,
+  "t": 5,
+  "cat": "production"
+ },
+ "W_GuildRaidsLateMiddleAge_Spicefarm": {
+  "n": "Лавка специй",
+  "w": 3,
+  "h": 3,
+  "pop": -60,
+  "s": 9600,
+  "c": 75,
+  "bs": 0.2,
+  "cm": 57600,
+  "cs": 70000,
+  "cc": 200,
+  "rm": 14400,
+  "t": 3600,
+  "cat": "production"
+ }
+};window.QI_START={"ents":[{"id":3586,"cityentity_id":"H_GuildRaidsEarlyMiddleAge_Townhall","type":"main_building","x":504,"y":504},{"id":3587,"cityentity_id":"I_GuildRaidsEarlyMiddleAge_Impediment1","type":"impediment","x":523,"y":518},{"id":3588,"cityentity_id":"I_GuildRaidsEarlyMiddleAge_Impediment1","type":"impediment","x":527,"y":514},{"id":3589,"cityentity_id":"I_GuildRaidsEarlyMiddleAge_Impediment1","type":"impediment","x":524,"y":516},{"id":3590,"cityentity_id":"I_GuildRaidsEarlyMiddleAge_Impediment1","type":"impediment","x":517,"y":518},{"id":3591,"cityentity_id":"I_GuildRaidsEarlyMiddleAge_Impediment1","type":"impediment","x":508,"y":521},{"id":3592,"cityentity_id":"I_GuildRaidsEarlyMiddleAge_Impediment1","type":"impediment","x":523,"y":505},{"id":3593,"cityentity_id":"I_GuildRaidsEarlyMiddleAge_Impediment2","type":"impediment","x":525,"y":508},{"id":3594,"cityentity_id":"I_GuildRaidsEarlyMiddleAge_Impediment2","type":"impediment","x":521,"y":510},{"id":3595,"cityentity_id":"I_GuildRaidsEarlyMiddleAge_Impediment2","type":"impediment","x":513,"y":520},{"id":3596,"cityentity_id":"I_GuildRaidsEarlyMiddleAge_Impediment2","type":"impediment","x":524,"y":506},{"id":3597,"cityentity_id":"I_GuildRaidsEarlyMiddleAge_Impediment2","type":"impediment","x":500,"y":512},{"id":3598,"cityentity_id":"I_GuildRaidsEarlyMiddleAge_Impediment2","type":"impediment","x":516,"y":504},{"id":3599,"cityentity_id":"I_GuildRaidsEarlyMiddleAge_Impediment2","type":"impediment","x":521,"y":514},{"id":3600,"cityentity_id":"I_GuildRaidsEarlyMiddleAge_Impediment2","type":"impediment","x":506,"y":503},{"id":3601,"cityentity_id":"I_GuildRaidsEarlyMiddleAge_Impediment2","type":"impediment","x":521,"y":526}],"areas":[{"x":504,"y":504,"w":4,"h":4},{"x":504,"y":508,"w":4,"h":4},{"x":504,"y":512,"w":4,"h":4},{"x":504,"y":516,"w":4,"h":4},{"x":508,"y":504,"w":4,"h":4},{"x":508,"y":508,"w":4,"h":4},{"x":508,"y":512,"w":4,"h":4},{"x":508,"y":516,"w":4,"h":4},{"x":512,"y":504,"w":4,"h":4},{"x":512,"y":508,"w":4,"h":4},{"x":512,"y":512,"w":4,"h":4},{"x":512,"y":516,"w":4,"h":4}],"blocked":[{"x":500,"y":500},{"x":520,"y":500},{"x":524,"y":500},{"x":500,"y":520},{"x":500,"y":524},{"x":504,"y":524},{"x":508,"y":524},{"x":512,"y":524}],"res":{"guild_raids_money":450000,"guild_raids_supplies":75000,"guild_raids_currency":265}};</script>
+<script>(function(){// Симулятор квантового поселения (КВ). Модель по данным игры: defs.json + формулы множителей.
+// Сущности в формате ответа игры (CityMapEntity), чтобы их можно было отдать помощнику как есть.
+'use strict';
+const DEFS = window.QI_DEFS;
+const P = window.QIPlanner;
+
+const H = 3600, PROD_T = 36000;                 // производство домов и мастерских — 10 ч
+const speedShards = (d, prod) => prod ? (d.t >= 36000 || (d.s || 0) >= 60000 ? 95 : (d.c || 0) >= 75 ? 75 : 50) : (d.t >= 36000 ? 50 : d.t >= 3600 ? 25 : 0);
+const isHouse = (d) => d.cat === 'residential';
+const produces = (d) => isHouse(d) || (d.s || 0) > 0;
+const key = (x, y) => x + ',' + y;
+
+class Sim {
+  constructor(o = {}) {
+    this.t = o.t || 1794000000;                  // секунды (как в игре)
+    this.ents = new Map(); this.nextId = 1;
+    this.res = Object.assign({ guild_raids_money: 0, guild_raids_supplies: 0, guild_raids_chrono_alloy: 0, guild_raids_currency: 0, guild_raids_rope: 0 }, o.res || {});
+    this.areas = (o.areas || []).map((a) => ({ x: a.x, y: a.y, w: a.w || 4, h: a.h || 4 }));
+    this.blocked = o.blocked || [];
+    this.expCosts = o.expCosts || [100, 150, 200, 250, 300, 350, 400, 450, 500, 550, 600, 650, 700, 750, 800, 850, 900, 950];
+    this.goodsCosts = o.goodsCosts || [30, 60, 90, 130, 180, 240, 310, 390, 480, 580, 700];
+    this.impCost = o.impCost || 10;
+    this.ext = Object.assign({ c: 0, s: 0 }, o.ext || {});        // бонусы основного города (+доля)
+    this.log = []; this.collects = [];
+    (o.ents || []).forEach((e) => { const c = JSON.parse(JSON.stringify(e)); this.ents.set(c.id, c); this.nextId = Math.max(this.nextId, c.id + 1); });
+  }
+  def(e) { return DEFS[e.cityentity_id] || {}; }
+  built(e) { return !(e.state && e.state.__class__ === 'ConstructionState'); }
+  ready(e) { return e.state && e.state.__class__ === 'ProductionFinishedState'; }
+  // --- состояние ---
+  stats() {
+    let dem = 0, sup = 0, popFree = 0, bm = 0, bs = 0;
+    this.ents.forEach((e) => {
+      const d = this.def(e);
+      if (!this.built(e)) { if ((d.pop || 0) < 0) popFree += d.pop; return; }
+      if (d.pop > 0) dem += d.pop;
+      popFree += d.pop || 0; sup += d.eu || 0; bm += d.bm || 0; bs += d.bs || 0;
+    });
+    const mf = P.moodFactor(sup, dem);
+    return { dem, sup, ratio: dem ? sup / dem : Infinity, mf, coinMul: mf + bm + this.ext.c, supMul: mf + bs + this.ext.s, popFree };
+  }
+  cells() { const s = new Set(); this.areas.forEach((a) => { for (let x = a.x; x < a.x + a.w; x++) for (let y = a.y; y < a.y + a.h; y++) s.add(key(x, y)); }); return s; }
+  occupied(skip) { const o = new Map(); this.ents.forEach((e) => { if (e.id === skip) return; const d = this.def(e); for (let x = e.x; x < e.x + (d.w || 1); x++) for (let y = e.y; y < e.y + (d.h || 1); y++) o.set(key(x, y), e.id); }); return o; }
+  fits(t, x, y, skip) {
+    const d = DEFS[t], c = this.cells(), o = this.occupied(skip);
+    for (let i = x; i < x + d.w; i++) for (let j = y; j < y + d.h; j++) { const k = key(i, j); if (!c.has(k) || o.has(k)) return false; }
+    return true;
+  }
+  prodState(e, start) {
+    const d = this.def(e);
+    const r = {}; if (d.m) r.guild_raids_money = d.m; if (d.s) r.guild_raids_supplies = d.s; if (d.c) r.guild_raids_chrono_alloy = d.c;
+    const po = { time: PROD_T, products: [{ type: 'resources', playerResources: { resources: r } }], instantFinishCost: { resources: { guild_raids_currency: speedShards(d, true) } } };
+    e.state = { __class__: 'ProducingState', next_state_transition_at: start + PROD_T, next_state_transition_in: PROD_T, productionOption: po };
+  }
+  // --- действия игрока (возвращают текст ошибки или null) ---
+  place(t, x, y) {
+    const d = DEFS[t]; if (!d) return 'нет такого здания';
+    const R = this.res, st = this.stats();
+    if ((R.guild_raids_money || 0) < (d.cm || 0) || (R.guild_raids_supplies || 0) < (d.cs || 0) || (R.guild_raids_chrono_alloy || 0) < (d.cc || 0)) return 'не хватает ресурсов';
+    if ((d.pop || 0) < 0 && st.popFree < -d.pop) return 'не хватает жителей';
+    if (!this.fits(t, x, y)) return 'место занято';
+    R.guild_raids_money -= d.cm || 0; R.guild_raids_supplies -= d.cs || 0; R.guild_raids_chrono_alloy -= d.cc || 0;
+    const e = { id: this.nextId++, player_id: 1, cityentity_id: t, type: 'generic_building', x, y, level: 23, state: { __class__: 'ConstructionState', next_state_transition_at: this.t + (d.t || 5), next_state_transition_in: d.t || 5 } };
+    this.ents.set(e.id, e); this.log.push([this.t, 'place', d.n, x, y]);
+    if ((d.t || 5) <= 5) this.finish(e);
+    return null;
+  }
+  finish(e) { const d = this.def(e); if (produces(d)) this.prodState(e, this.t); else e.state = { __class__: 'IdleState' }; }
+  demolish(id) {
+    const e = this.ents.get(id); if (!e) return 'нет здания'; const d = this.def(e);
+    if (e.cityentity_id.startsWith('H_')) return 'ратушу не снести';
+    if (e.cityentity_id.startsWith('I_')) return 'препятствие убирается за осколки';
+    if (isHouse(d) && this.built(e) && this.stats().popFree < d.pop) return 'не хватает свободных жителей';
+    this.ents.delete(id); this.res.guild_raids_money += d.rm || 0; this.log.push([this.t, 'demolish', d.n]);
+    return null;
+  }
+  // режим перестройки игры: все переносы разом, проверка пересечений в конце
+  moveMany(list) {
+    const old = list.map((m) => { const e = this.ents.get(m.id); return e && [e, e.x, e.y]; });
+    if (old.some((o) => !o)) return 'нет здания';
+    list.forEach((m) => { const e = this.ents.get(m.id); e.x = m.x; e.y = m.y; });
+    const c = this.cells(), seen = new Set(), moved = new Set(list.map((m) => m.id)); let bad = false;
+    this.ents.forEach((e) => { const d = this.def(e); for (let x = e.x; x < e.x + (d.w || 1); x++) for (let y = e.y; y < e.y + (d.h || 1); y++) { const k = key(x, y); if (seen.has(k) || (moved.has(e.id) && !c.has(k))) bad = true; seen.add(k); } });
+    if (bad) { old.forEach(([e, x, y]) => { e.x = x; e.y = y; }); return 'место занято (перестройка)'; }
+    return null;
+  }
+  move(id, x, y) { const e = this.ents.get(id); if (!e) return 'нет здания'; if (!this.fits(e.cityentity_id, x, y, id)) return 'место занято'; e.x = x; e.y = y; return null; }
+  collect(id) {
+    const e = this.ents.get(id); if (!e || !this.ready(e)) return 'не готово';
+    const d = this.def(e), st = this.stats(), R = this.res, got = { m: 0, s: 0, c: 0 };
+    if (e.cityentity_id.startsWith('H_')) { // ратуша: фиксированно, без эйфории
+      const pr = (e.state.current_product && e.state.current_product.product && e.state.current_product.product.resources) || { guild_raids_money: 50000, guild_raids_supplies: 50000, guild_raids_chrono_alloy: 15 };
+      R.guild_raids_money += pr.guild_raids_money || 0; R.guild_raids_supplies += pr.guild_raids_supplies || 0; R.guild_raids_chrono_alloy += pr.guild_raids_chrono_alloy || 0;
+      e.state = { __class__: 'ProducingState', next_state_transition_at: this.t + 36000, current_product: e.state.current_product }; return null;
+    }
+    if (d.m) got.m = Math.round(d.m * st.coinMul);
+    if (d.s) got.s = Math.round(d.s * ((d.pop || 0) < 0 ? st.supMul : 1));
+    if (d.c) got.c = Math.round(d.c * st.mf);
+    R.guild_raids_money += got.m; R.guild_raids_supplies += got.s; R.guild_raids_chrono_alloy += got.c;
+    this.collects.push({ t: this.t, id, n: d.n, mf: st.mf, ratio: st.ratio, ...got });
+    this.prodState(e, this.t);
+    return null;
+  }
+  speed(id) {
+    const e = this.ents.get(id); if (!e) return 'нет здания'; const d = this.def(e), R = this.res;
+    const constr = !this.built(e), c = speedShards(d, !constr);
+    if (!constr && !(e.state && e.state.__class__ === 'ProducingState')) return 'нечего ускорять';
+    if ((R.guild_raids_currency || 0) < c) return 'мало осколков';
+    R.guild_raids_currency -= c;
+    if (constr) this.finish(e); else { e.state = { ...e.state, __class__: 'ProductionFinishedState' }; delete e.state.next_state_transition_at; }
+    return null;
+  }
+  removeImpediment(id) {
+    const e = this.ents.get(id); if (!e || !e.cityentity_id.startsWith('I_')) return 'не препятствие';
+    if ((this.res.guild_raids_currency || 0) < this.impCost) return 'мало осколков';
+    this.res.guild_raids_currency -= this.impCost; this.ents.delete(id);
+    const seq = [10, 25, 50, 75, 90]; this.impCost = seq[Math.min(seq.indexOf(this.impCost) + 1, seq.length - 1)] || 90;
+    return null;
+  }
+  expand(x, y, goods) {
+    if (this.areas.some((a) => a.x === x && a.y === y) || this.blocked.some((b) => b.x === x && b.y === y)) return 'участок недоступен';
+    const R = this.res;
+    if (goods) { const c = this.goodsCosts[0]; if (c == null || (R.guild_raids_rope || 0) < c) return 'мало верёвок'; R.guild_raids_rope -= c; this.goodsCosts.shift(); }
+    else { const c = this.expCosts[0]; if (c == null || (R.guild_raids_currency || 0) < c) return 'мало осколков'; R.guild_raids_currency -= c; this.expCosts.shift(); }
+    this.areas.push({ x, y, w: 4, h: 4 }); return null;
+  }
+  ropes(n = 1) {   // канатная мастерская: «очень много верёвок» — 70 000 монет + 56 000 молотков → 20 верёвок
+    const R = this.res; if (![...this.ents.values()].some((e) => e.cityentity_id === 'W_GuildRaidsHighMiddleAge_Ropery' && this.built(e))) return 'нет мастерской';
+    for (let i = 0; i < n; i++) { if (R.guild_raids_money < 70000 || R.guild_raids_supplies < 56000) return 'мало ресурсов'; R.guild_raids_money -= 70000; R.guild_raids_supplies -= 56000; R.guild_raids_rope = (R.guild_raids_rope || 0) + 20; }
+    return null;
+  }
+  // --- время ---
+  advance(sec) {
+    const end = this.t + sec;
+    for (;;) {
+      let nx = Infinity;
+      this.ents.forEach((e) => { const a = e.state && e.state.next_state_transition_at; if (a && a < nx) nx = a; });
+      if (nx > end) break;
+      this.t = Math.max(this.t, nx);
+      this.ents.forEach((e) => {
+        const s = e.state; if (!s || !s.next_state_transition_at || s.next_state_transition_at > this.t) return;
+        if (s.__class__ === 'ConstructionState') this.finish(e);
+        else if (s.__class__ === 'ProducingState') { e.state = { ...s, __class__: 'ProductionFinishedState' }; delete e.state.next_state_transition_at; delete e.state.next_state_transition_in; }
+        else if (e.state.current_product) { e.state = { ...s, __class__: 'ProductionFinishedState' }; delete e.state.next_state_transition_at; }   // ратуша
+      });
+    }
+    this.t = end;
+    this.ents.forEach((e) => { const s = e.state; if (s && s.next_state_transition_at) s.next_state_transition_in = Math.max(0, s.next_state_transition_at - this.t); });
+  }
+  // снимок как у «Данных для разработчика» — для помощника и для сравнения с игрой
+  dump() {
+    const st = this.stats(), R = { ...this.res };
+    let tot = 0, free = 0; this.ents.forEach((e) => { const d = this.def(e); if (!this.built(e)) { if ((d.pop || 0) < 0) free += d.pop; return; } if (d.pop > 0) tot += d.pop; free += d.pop || 0; });
+    R.guild_raids_total_population = tot; R.guild_raids_population = free; R.guild_raids_happiness = st.sup;
+    return { t: new Date(this.t * 1000).toISOString(), ents: [...this.ents.values()], res: R, areas: this.areas, blocked: this.blocked, expCosts: this.expCosts.slice(), goodsCosts: this.goodsCosts.slice(), impCost: this.impCost };
+  }
+  static fromDump(d, ext) {
+    return new Sim({ t: Math.floor(Date.parse(d.t) / 1000), ents: d.ents, res: d.res, areas: d.areas, blocked: d.blocked, expCosts: d.expCosts, goodsCosts: d.goodsCosts, impCost: d.impCost, ext });
+  }
+}
+window.QISim = { Sim, DEFS, speedShards };
+})();</script>
+<script>// Тренажёр КВ: ручная игра на симуляторе. Помощник (Tampermonkey) читает window.qiSim.
+(function () {
+  'use strict';
+  const DEFS = window.QI_DEFS, START = window.QI_START;
+  const T0 = 1794000000, SEASON = 11 * 86400, PID = 1, LS = 'qiSimState';
+  const $ = (s) => document.querySelector(s);
+  const fmt = (n) => Math.round(n || 0).toLocaleString('ru-RU');
+  const CELL = 18, MIN = 500, MAX = 528;
+  const ALL_TILES = []; for (let x = MIN; x < MAX; x += 4) for (let y = MIN; y < MAX; y += 4) ALL_TILES.push({ x, y });
+  const COLORS = { residential: '#c9a86a', culture: '#8a6fd1', production: '#5aa36f', goods: '#4f8fcf', military: '#b55a5a', decoration: '#6d8f5e', main_building: '#d4b44a', impediment: '#6b5f55' };
+
+  let sim, opts, undo = [], diamonds = 0, army = 0, sel = null, placing = null, moving = null, hover = null, hint = null, msg = '';
+
+  function defaults() { return { money: 550000, supplies: 175000, shards: 1640, extC: 0.2, extS: 0.2, diaRate: 1 }; }
+  function newSim(o) {
+    const ents = START.ents.map((e) => ({ ...e, player_id: PID, state: /Townhall/.test(e.cityentity_id)
+      ? { __class__: 'ProducingState', next_state_transition_at: T0 + 36000, current_product: { product: { resources: { guild_raids_money: 50000, guild_raids_supplies: 50000, guild_raids_chrono_alloy: 15 } } } }
+      : { __class__: 'IdleState' } }));
+    return new QISim.Sim({ t: T0, ents, areas: START.areas, blocked: START.blocked, ext: { c: o.extC, s: o.extS },
+      res: { guild_raids_money: o.money, guild_raids_supplies: o.supplies, guild_raids_chrono_alloy: 0, guild_raids_currency: o.shards, guild_raids_rope: 0 } });
+  }
+  const snap = () => JSON.stringify({ d: sim.dump(), next: sim.nextId, collects: sim.collects.length, diamonds, army, opts });
+  function restore(js) {
+    const o = JSON.parse(js); opts = o.opts || defaults();
+    sim = QISim.Sim.fromDump(o.d, { c: opts.extC, s: opts.extS }); sim.nextId = o.next || sim.nextId; diamonds = o.diamonds || 0; army = o.army || 0;
+  }
+  function save() { try { localStorage.setItem(LS, snap()); } catch (e) { /* нет места */ } }
+  function act(fn, label) {   // любое действие игрока: с отменой
+    const before = snap(); const err = fn();
+    if (err) { msg = '⚠ ' + err; render(); return false; }
+    undo.push(before); if (undo.length > 80) undo.shift(); msg = label || ''; changed(); return true;
+  }
+  function changed() { window.qiSim.ver++; save(); render(); }
+
+  // помощнику: снимок города, время, бонусы
+  window.qiSim = { ver: 1, pid: PID, get t() { return sim.t; }, get seasonEnd() { return T0 + SEASON; }, get ext() { return { c: opts.extC, s: opts.extS }; }, get army() { return army; }, dump: () => sim.dump() };
+
+  // ---------- ресурсы с доплатой бриллиантами ----------
+  function payShards(n) {   // не хватает осколков — докупаем бриллиантами (учёт)
+    const R = sim.res; const lack = n - (R.guild_raids_currency || 0);
+    if (lack > 0) { diamonds += Math.ceil(lack * opts.diaRate); R.guild_raids_currency += lack; }
+  }
+  function speed(e) {
+    const d = DEFS[e.cityentity_id]; const constr = !sim.built(e); const c = QISim.speedShards(d, !constr);
+    if (c > (sim.res.guild_raids_currency || 0) && !confirm('Осколков не хватает: доплатить ' + Math.ceil((c - sim.res.guild_raids_currency) * opts.diaRate) + ' 💎?')) return 'мало осколков';
+    payShards(c); return sim.speed(e.id);
+  }
+  function speedDia(e) {    // ускорить только за бриллианты (осколки не трогаем)
+    const d = DEFS[e.cityentity_id]; const constr = !sim.built(e); const c = QISim.speedShards(d, !constr);
+    const keep = sim.res.guild_raids_currency; sim.res.guild_raids_currency = c; const err = sim.speed(e.id);
+    sim.res.guild_raids_currency = keep; if (!err) diamonds += Math.ceil(c * opts.diaRate); return err;
+  }
+
+  // ---------- время ----------
+  function skip(sec) { act(() => { sim.advance(sec); return null; }, '⏩ +' + (sec >= 3600 ? sec / 3600 + ' ч' : Math.round(sec / 60) + ' мин')); }
+  function nextEvent() {
+    let nx = Infinity; sim.ents.forEach((e) => { const a = e.state && e.state.next_state_transition_at; if (a && a > sim.t && a < nx) nx = a; });
+    if (!isFinite(nx)) { msg = 'Нет событий впереди'; render(); return; }
+    skip(nx - sim.t);
+  }
+  const clock = (t) => { const s = t - T0, d = Math.floor(s / 86400) + 1, h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60); return 'день ' + d + ', ' + String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0'); };
+  const left = (e) => { const a = e.state && e.state.next_state_transition_at; if (!a) return ''; const s = Math.max(0, a - sim.t); return s >= 3600 ? Math.floor(s / 3600) + ' ч ' + Math.floor((s % 3600) / 60) + ' мин' : Math.ceil(s / 60) + ' мин'; };
+
+  // ---------- карта ----------
+  const cv = $('#map'), cx = cv.getContext('2d');
+  cv.width = (MAX - MIN) * CELL + 1; cv.height = (MAX - MIN) * CELL + 1;
+  const px = (v) => (v - MIN) * CELL;
+  const tileFree = (t) => !sim.areas.some((a) => a.x === t.x && a.y === t.y) && !sim.blocked.some((b) => b.x === t.x && b.y === t.y);
+  const tileNear = (t) => sim.areas.some((a) => (Math.abs(a.x - t.x) === 4 && a.y === t.y) || (Math.abs(a.y - t.y) === 4 && a.x === t.x));
+  function entAt(x, y) { let r = null; sim.ents.forEach((e) => { const d = DEFS[e.cityentity_id] || { w: 1, h: 1 }; if (x >= e.x && x < e.x + d.w && y >= e.y && y < e.y + d.h) r = e; }); return r; }
+  function draw() {
+    cx.clearRect(0, 0, cv.width, cv.height);
+    ALL_TILES.forEach((t) => {
+      if (sim.blocked.some((b) => b.x === t.x && b.y === t.y)) return;
+      if (!tileFree(t)) { cx.fillStyle = '#2b3a2c'; cx.fillRect(px(t.x), px(t.y), 4 * CELL, 4 * CELL); }
+      else if (tileNear(t)) { cx.strokeStyle = '#55606c'; cx.setLineDash([4, 4]); cx.strokeRect(px(t.x) + 2, px(t.y) + 2, 4 * CELL - 4, 4 * CELL - 4); cx.setLineDash([]); cx.fillStyle = '#55606c'; cx.font = '18px sans-serif'; cx.fillText('+', px(t.x) + 2 * CELL - 5, px(t.y) + 2 * CELL + 6); }
+    });
+    cx.strokeStyle = 'rgba(255,255,255,.06)';
+    sim.areas.forEach((a) => { for (let i = 0; i <= a.w; i++) { cx.beginPath(); cx.moveTo(px(a.x + i), px(a.y)); cx.lineTo(px(a.x + i), px(a.y + a.h)); cx.stroke(); } for (let j = 0; j <= a.h; j++) { cx.beginPath(); cx.moveTo(px(a.x), px(a.y + j)); cx.lineTo(px(a.x + a.w), px(a.y + j)); cx.stroke(); } });
+    sim.ents.forEach((e) => {
+      const d = DEFS[e.cityentity_id] || { w: 1, h: 1, n: '?' }; if (moving && moving.id === e.id) return;
+      const x = px(e.x), y = px(e.y), w = d.w * CELL, h = d.h * CELL, cat = e.cityentity_id.startsWith('I_') ? 'impediment' : d.cat;
+      cx.fillStyle = COLORS[cat] || '#777'; cx.globalAlpha = sim.built(e) ? 1 : 0.45; cx.fillRect(x + 1, y + 1, w - 2, h - 2); cx.globalAlpha = 1;
+      const st = e.state && e.state.__class__;
+      if (st === 'ProductionFinishedState') { cx.strokeStyle = '#7dff8a'; cx.lineWidth = 3; cx.strokeRect(x + 2, y + 2, w - 4, h - 4); cx.lineWidth = 1; }
+      if (st === 'ProducingState' && e.state.next_state_transition_at) {
+        const tot = (e.state.productionOption && e.state.productionOption.time) || 36000, p = 1 - Math.max(0, e.state.next_state_transition_at - sim.t) / tot;
+        cx.fillStyle = 'rgba(0,0,0,.45)'; cx.fillRect(x + 2, y + h - 5, w - 4, 3); cx.fillStyle = '#e6d36a'; cx.fillRect(x + 2, y + h - 5, (w - 4) * Math.min(1, p), 3);
+      }
+      if (sel && sel.id === e.id) { cx.strokeStyle = '#fff'; cx.lineWidth = 2; cx.strokeRect(x, y, w, h); cx.lineWidth = 1; }
+      cx.fillStyle = '#111'; cx.font = '10px sans-serif'; const lab = short(d.n); if (w > 20) cx.fillText(lab, x + 3, y + 12, w - 6);
+    });
+    // подсказка помощника
+    if (hint) {
+      cx.strokeStyle = '#ff9f1a'; cx.lineWidth = 3; cx.setLineDash([6, 3]);
+      hint.forEach((r) => cx.strokeRect(px(r.x) + 1, px(r.y) + 1, r.w * CELL - 2, r.h * CELL - 2));
+      cx.setLineDash([]); cx.lineWidth = 1;
+    }
+    // призрак постройки/переноса
+    const g = placing || (moving && moving.cityentity_id);
+    if (g && hover) {
+      const d = DEFS[g]; const ok = sim.fits(g, hover.x, hover.y, moving ? moving.id : undefined);
+      cx.fillStyle = ok ? 'rgba(120,255,140,.45)' : 'rgba(255,90,90,.45)'; cx.fillRect(px(hover.x), px(hover.y), d.w * CELL, d.h * CELL);
+    }
+  }
+  const short = (n) => ({ 'Многоэтажный дом': 'М', 'Усадьба': 'У', 'Каркасный дом': 'Карк', 'Дом с гонтовой кровлей': 'ГК', 'Церковь': 'Церк', 'Пекарня': 'Пек', 'Лаборатория алхимика': 'Алх', 'Дом картографа': 'Карт', 'Дом лекаря': 'Лек', 'Позорный столб': 'Столб', 'Пивоварня': 'Пив', 'Канатная мастерская': 'Канаты', 'Мастерская катапульт': 'Катап', 'Ратуша': 'Ратуша', 'Препятствие': '✕' }[n] || n.slice(0, 6));
+
+  function cellOf(ev) { const r = cv.getBoundingClientRect(); return { x: MIN + Math.floor((ev.clientX - r.left) / CELL), y: MIN + Math.floor((ev.clientY - r.top) / CELL) }; }
+  cv.addEventListener('mousemove', (ev) => { if (!placing && !moving) return; hover = cellOf(ev); draw(); });
+  cv.addEventListener('mouseleave', () => { hover = null; draw(); });
+  cv.addEventListener('contextmenu', (ev) => { ev.preventDefault(); placing = null; moving = null; render(); });
+  cv.addEventListener('click', (ev) => {
+    const c = cellOf(ev);
+    if (placing) { const t = placing; act(() => sim.place(t, c.x, c.y), 'Поставлено: ' + DEFS[t].n); if (!ev.shiftKey) placing = null; render(); return; }
+    if (moving) { const e = moving; moving = null; act(() => sim.move(e.id, c.x, c.y), 'Перенесено'); return; }
+    const e = entAt(c.x, c.y);
+    if (e) { sel = e; render(); return; }
+    const t = ALL_TILES.find((t) => c.x >= t.x && c.x < t.x + 4 && c.y >= t.y && c.y < t.y + 4);
+    sel = null;
+    if (t && tileFree(t) && tileNear(t)) { sel = { tile: t }; }
+    render();
+  });
+  document.addEventListener('keydown', (ev) => {
+    if (ev.target.tagName === 'INPUT') return;
+    if (ev.key === 'Escape') { placing = null; moving = null; sel = null; render(); }
+    if (ev.key === 'z' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); doUndo(); }
+  });
+
+  // ---------- панели ----------
+  function topBar() {
+    const st = sim.stats(), R = sim.res;
+    $('#res').innerHTML = [
+      ['🕒', clock(sim.t) + ' <span class="dim">(до конца ' + Math.max(0, Math.ceil((T0 + SEASON - sim.t) / 86400)) + ' дн)</span>'],
+      ['Монеты', fmt(R.guild_raids_money)], ['Молотки', fmt(R.guild_raids_supplies)], ['Хроно', fmt(R.guild_raids_chrono_alloy)],
+      ['Осколки', fmt(R.guild_raids_currency)], ['Верёвки', fmt(R.guild_raids_rope)], ['💎 потрачено', fmt(diamonds)],
+      ['Эйфория', (isFinite(st.ratio) ? Math.round(st.ratio * 100) + '%' : '—') + ' <span class="dim">×' + st.mf + '</span>'],
+      ['Монеты ×', st.coinMul.toFixed(2)], ['Молотки ×', st.supMul.toFixed(2)], ['Свободных жителей', fmt(st.popFree)], ['Армия', fmt(army)],
+    ].map(([k, v]) => '<span class="r"><b>' + k + '</b> ' + v + '</span>').join('');
+  }
+  function palette() {
+    const groups = [['Дома', 'residential'], ['Культура', 'culture'], ['Производство', 'production'], ['Товары', 'goods'], ['Армия', 'military'], ['Декор', 'decoration']];
+    const seen = new Set();
+    $('#pal').innerHTML = groups.map(([g, cat]) => '<div class="grp">' + g + '</div>' + Object.entries(DEFS).filter(([k, d]) => d.cat === cat && k.startsWith('W_') && !seen.has(d.n) && seen.add(d.n)).map(([k, d]) =>
+      '<button class="pb' + (placing === k ? ' on' : '') + '" data-t="' + k + '" title="' + d.w + '×' + d.h + (d.eu ? ', эйфория ' + d.eu : '') + (d.pop ? ', жители ' + d.pop : '') + (d.m ? ', монеты ' + fmt(d.m) : '') + (d.s ? ', молотки ' + fmt(d.s) : '') + (d.c ? ', хроно ' + d.c : '') + ', стройка ' + Math.round((d.t || 5) / 60) + ' мин">' +
+      '<span>' + d.n + '</span><span class="dim">' + [d.cm && fmt(d.cm) + 'м', d.cs && fmt(d.cs) + 'мл', d.cc && d.cc + 'х'].filter(Boolean).join(' ') + '</span></button>').join('')).join('');
+    $('#pal').querySelectorAll('.pb').forEach((b) => b.addEventListener('click', () => { placing = placing === b.dataset.t ? null : b.dataset.t; moving = null; sel = null; render(); }));
+  }
+  function info() {
+    const box = $('#sel');
+    if (placing) { box.innerHTML = '<b>Ставим: ' + DEFS[placing].n + '</b><div class="dim">Клик по карте — поставить, Shift+клик — ставить ещё, правый клик/Esc — отмена</div>'; return; }
+    if (moving) { box.innerHTML = '<b>Переносим: ' + DEFS[moving.cityentity_id].n + '</b><div class="dim">Клик — новое место (левый верхний угол), Esc — отмена</div>'; return; }
+    if (!sel) { box.innerHTML = '<div class="dim">Выберите здание на карте или в списке слева. Пунктирные «+» — участки, которые можно купить.</div>'; return; }
+    if (sel.tile) {
+      const t = sel.tile;
+      box.innerHTML = '<b>Участок ' + t.x + ',' + t.y + '</b><div><button id="b-exs">Купить за ' + (sim.expCosts[0] ?? '—') + ' осколков</button> <button id="b-exg">Купить за ' + (sim.goodsCosts[0] ?? '—') + ' верёвок</button></div>';
+      on('#b-exs', () => { const c = sim.expCosts[0]; if (c == null) return; payShards(c); return sim.expand(t.x, t.y, false); }, 'Участок куплен');
+      on('#b-exg', () => sim.expand(t.x, t.y, true), 'Участок куплен за товары');
+      return;
+    }
+    const e = sim.ents.get(sel.id); if (!e) { sel = null; box.innerHTML = ''; return; }
+    const d = DEFS[e.cityentity_id] || {}, st = e.state && e.state.__class__, imp = e.cityentity_id.startsWith('I_'), th = e.cityentity_id.startsWith('H_');
+    const stTxt = { ConstructionState: 'строится, ещё ' + left(e), ProducingState: 'производство, ещё ' + left(e), ProductionFinishedState: '<b style="color:#7dff8a">готово к сбору</b>', IdleState: 'простаивает' }[st] || st;
+    const b = [];
+    if (st === 'ProductionFinishedState') b.push('<button id="b-col">Собрать</button>');
+    if (!imp && !th) b.push('<button id="b-dem">Снести (+' + fmt(d.rm) + ' мон.)</button>');
+    if (!imp) b.push('<button id="b-mov">Перенести</button>');
+    if (st === 'ConstructionState' || (st === 'ProducingState' && !th)) { const c = QISim.speedShards(d, st !== 'ConstructionState'); if (c) b.push('<button id="b-spd">Ускорить: ' + c + ' осколков</button>', '<button id="b-spdd">Ускорить за 💎 ' + Math.ceil(c * opts.diaRate) + '</button>'); }
+    if (/Ropery/.test(e.cityentity_id) && sim.built(e)) b.push('<button id="b-rope">20 верёвок (70 000 мон. + 56 000 мол.)</button>');
+    if (/Catapult|Siege/i.test(e.cityentity_id) && st === 'IdleState') b.push('<button id="b-cat">Катапульты ×10 (35 000 + 28 000)</button>');
+    if (/Catapult|Siege/i.test(e.cityentity_id) && st === 'ProductionFinishedState') b.push('<button id="b-catc">Забрать катапульты</button>');
+    if (imp) b.push('<button id="b-imp">Убрать за ' + sim.impCost + ' осколков</button>');
+    box.innerHTML = '<b>' + (d.n || e.cityentity_id) + '</b> <span class="dim">#' + e.id + ' (' + e.x + ',' + e.y + ')</span><div>' + stTxt + '</div>' +
+      '<div class="dim">' + [d.pop && 'жители ' + d.pop, d.eu && 'эйфория ' + d.eu, d.m && 'монеты ' + fmt(d.m), d.s && 'молотки ' + fmt(d.s), d.c && 'хроно ' + d.c, d.bm && 'бонус монет +' + d.bm * 100 + '%', d.bs && 'бонус молотков +' + d.bs * 100 + '%'].filter(Boolean).join(', ') + '</div><div class="btns">' + b.join('') + '</div>';
+    on('#b-col', () => (/Catapult|Siege/i.test(e.cityentity_id) ? 'нечего' : sim.collect(e.id)), 'Собрано');
+    on('#b-dem', () => { if (sim.ready(e) && d.m) sim.collect(e.id); const r = sim.demolish(e.id); if (!r) sel = null; return r; }, 'Снесено');
+    const mv = $('#b-mov'); if (mv) mv.addEventListener('click', () => { moving = e; sel = null; render(); });
+    on('#b-spd', () => speed(e), 'Ускорено');
+    on('#b-spdd', () => speedDia(e), 'Ускорено за бриллианты');
+    on('#b-rope', () => sim.ropes(1), '+20 верёвок');
+    on('#b-cat', () => { const R = sim.res; if (R.guild_raids_money < 35000 || R.guild_raids_supplies < 28000) return 'не хватает ресурсов'; R.guild_raids_money -= 35000; R.guild_raids_supplies -= 28000; e.state = { __class__: 'ProducingState', next_state_transition_at: sim.t + 60, productionOption: { time: 60 } }; return null; }, 'Катапульты строятся');
+    on('#b-catc', () => { army += 10; e.state = { __class__: 'IdleState' }; return null; }, '+10 катапульт');
+    on('#b-imp', () => { const c = sim.impCost; payShards(c); const r = sim.removeImpediment(e.id); if (!r) sel = null; return r; }, 'Препятствие убрано');
+  }
+  function on(id, fn, label) { const el = $(id); if (el) el.addEventListener('click', () => act(fn, label)); }
+  function collectAll(kind) {
+    act(() => { let n = 0; sim.ents.forEach((e) => { const d = DEFS[e.cityentity_id] || {}; if (!sim.ready(e) || /Catapult|Siege/i.test(e.cityentity_id)) return; if (kind === 'm' ? (d.m || e.cityentity_id.startsWith('H_')) : kind === 's' ? d.s : true) { sim.collect(e.id); n++; } }); return n ? null : 'нечего собирать'; }, 'Собрано');
+  }
+  function doUndo() { const s = undo.pop(); if (!s) { msg = 'Отменять нечего'; render(); return; } restore(s); msg = '↶ отменено'; sel = null; changed(); }
+
+  // ---------- подсказка помощника на карте ----------
+  let hintVer = -1;
+  function readHint() {
+    const H = window.foeQiHelper; if (!H || !H.step) { $('#hh').textContent = 'Помощник не найден: поставьте FoE КВ помощник 2.22+ в Tampermonkey и обновите страницу.'; hint = null; return; }
+    const hv = H.S && H.S.ver; if (hintVer === hv) return; hintVer = hv;
+    let o; try { o = H.step(); } catch (e) { $('#hh').textContent = 'Помощник: ошибка ' + e.message; hint = null; return; }
+    const n = (o && o.c && o.c.next) || {}; const rs = [];
+    const rect = (t, p) => { const d = DEFS[t]; if (d && p) rs.push({ x: p.x, y: p.y, w: d.w, h: d.h }); };
+    if (n.spot || n.slot) rect(n.t || (n.slot && n.slot.t) || placingType(n.kind), n.spot || n.slot);
+    if (n.ent && n.ent.cityentity_id) { rect(n.ent.cityentity_id, n.ent); if (n.to) rect(n.ent.cityentity_id, n.to); }
+    if (n.tile) rs.push({ x: n.tile.x, y: n.tile.y, w: 4, h: 4 });
+    if (o.c.mode === 'expand' && o.c.tiles) o.c.tiles.forEach((t) => rs.push({ x: t.x, y: t.y, w: 4, h: 4 }));
+    hint = rs.length ? rs : null;
+    $('#hh').innerHTML = '<b>Помощник:</b> ' + (n.text || '—') + (rs.length ? ' <span class="dim">(оранжевая рамка на карте)</span>' : '');
+  }
+  const placingType = (k) => ({ bake: 'W_GuildRaidsEarlyMiddleAge_Bakery', brew: 'W_GuildRaidsLateMiddleAge_Brewery', church: 'W_GuildRaidsHighMiddleAge_Church' }[k]);
+
+  // ---------- сводка ----------
+  function summary() {
+    const cnt = {}; sim.ents.forEach((e) => { const n = (DEFS[e.cityentity_id] || {}).n; if (n && !/Препятствие|Ратуша/.test(n)) cnt[n] = (cnt[n] || 0) + 1; });
+    const last = sim.collects.slice(-400); const win = {}; last.forEach((c) => { const k = Math.floor((c.t - T0) / 3600); win[k] = win[k] || { m: 0, s: 0, c: 0 }; win[k].m += c.m; win[k].s += c.s; win[k].c += c.c; });
+    const rows = Object.entries(win).slice(-6).reverse().map(([h, o]) => '<tr><td>' + clock(T0 + h * 3600).replace(/:\d\d$/, ':00') + '</td><td>' + fmt(o.m) + '</td><td>' + fmt(o.s) + '</td><td>' + fmt(o.c) + '</td></tr>').join('');
+    $('#sum').innerHTML = '<div class="grp">Состав</div>' + Object.entries(cnt).sort((a, b) => b[1] - a[1]).map(([n, k]) => '<div>' + n + ': <b>' + k + '</b></div>').join('') +
+      '<div class="grp">Сборы по часам</div><table><tr><th>час</th><th>монеты</th><th>молотки</th><th>хроно</th></tr>' + rows + '</table>';
+  }
+  function render() { topBar(); palette(); info(); readHint(); draw(); summary(); $('#msg').textContent = msg; $('#undo').disabled = !undo.length; }
+
+  // ---------- кнопки ----------
+  $('#t1').onclick = () => skip(3600); $('#t12').onclick = () => skip(12 * 3600); $('#t10m').onclick = () => skip(600); $('#tev').onclick = nextEvent;
+  $('#cm').onclick = () => collectAll('m'); $('#cs').onclick = () => collectAll('s'); $('#ca').onclick = () => collectAll('a');
+  $('#undo').onclick = doUndo;
+  $('#new').onclick = () => {
+    const o = defaults(); const f = (id, k) => { const v = parseFloat($(id).value); if (isFinite(v)) o[k] = v; };
+    f('#o-m', 'money'); f('#o-s', 'supplies'); f('#o-sh', 'shards'); f('#o-ec', 'extC'); f('#o-es', 'extS'); f('#o-dr', 'diaRate');
+    if (!confirm('Начать сезон заново? Текущий город пропадёт.')) return;
+    opts = o; sim = newSim(o); undo = []; diamonds = 0; army = 0; sel = null; msg = 'Новый сезон'; changed();
+  };
+  try { const s = localStorage.getItem(LS); if (s) restore(s); } catch (e) { sim = null; }
+  if (!sim) { opts = defaults(); sim = newSim(opts); }
+  $('#o-m').value = opts.money; $('#o-s').value = opts.supplies; $('#o-sh').value = opts.shards; $('#o-ec').value = opts.extC; $('#o-es').value = opts.extS; $('#o-dr').value = opts.diaRate;
+  setInterval(() => { readHint(); draw(); }, 700);
+  render();
+})();
+</script>
+</body></html>
