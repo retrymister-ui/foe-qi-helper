@@ -1089,7 +1089,8 @@ window.QISim = { Sim, DEFS, speedShards };
 (function () {
   'use strict';
   const DEFS = window.QI_DEFS, START = window.QI_START;
-  const T0d = 1794000000, SEASON = 11 * 86400, LS = 'qiSimState';
+  const T0d = 1793250000,   // чт 29.10.2026 05:00 UTC — сезон КВ всегда стартует в четверг утром и длится 11 дней (до пн)
+    SEASON = 11 * 86400, LS = 'qiSimState';
   // начало/конец сезона: свой старт или из игры (город, присланный помощником)
   const end = () => (opts && opts.end) || T0d + SEASON, t0 = () => end() - SEASON;
   const $ = (s) => document.querySelector(s);
@@ -1178,7 +1179,7 @@ window.QISim = { Sim, DEFS, speedShards };
     if (!isFinite(nx)) { msg = 'Нет событий впереди'; render(); return; }
     skip(nx - sim.t);
   }
-  const clock = (t) => { const s = t - t0(), d = Math.floor(s / 86400) + 1, h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60); return 'день ' + d + ', ' + String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0'); };
+  const clock = (t) => { const d = Math.floor((t - t0()) / 86400) + 1; return 'день ' + d + ' (' + new Date(t * 1000).toLocaleString('ru-RU', { weekday: 'short', hour: '2-digit', minute: '2-digit' }) + ')'; };
   const left = (e) => { const a = e.state && e.state.next_state_transition_at; if (!a) return ''; const s = Math.max(0, a - sim.t); return s >= 3600 ? Math.floor(s / 3600) + ' ч ' + Math.floor((s % 3600) / 60) + ' мин' : Math.ceil(s / 60) + ' мин'; };
 
   // ---------- карта ----------
@@ -1466,10 +1467,10 @@ window.QISim = { Sim, DEFS, speedShards };
     const o = defaults(); const f = (id, k) => { const v = parseFloat($(id).value); if (isFinite(v)) o[k] = v; };
     f('#o-m', 'money'); f('#o-s', 'supplies'); f('#o-sh', 'shards'); f('#o-ec', 'extC'); f('#o-es', 'extS'); 
     if (!confirm('Начать сезон заново? Текущий город пропадёт.')) return;
-    opts = o; sim = newSim(o); undo = []; diamonds = 0; army = 0; armyCan = 0; coll = { n: 0, t: 0 }; hookSim(); sel = null; msg = 'Новый сезон'; changed();
+    opts = { ...o, end: T0d + SEASON }; sim = newSim(opts); undo = []; diamonds = 0; army = 0; armyCan = 0; coll = { n: 0, t: 0 }; hookSim(); sel = null; msg = 'Новый сезон'; changed();
   };
   try { const s = localStorage.getItem(LS); if (s) restore(s); } catch (e) { sim = null; }
-  if (!sim) { opts = defaults(); sim = newSim(opts); hookSim(); }
+  if (!sim) { opts = { ...defaults(), end: T0d + SEASON }; sim = newSim(opts); hookSim(); }
   $('#o-buy').value = opts.buy || 'ask'; $('#o-m').value = opts.money; $('#o-s').value = opts.supplies; $('#o-sh').value = opts.shards; $('#o-ec').value = opts.extC; $('#o-es').value = opts.extS; 
   setInterval(() => { readHint(); draw(); }, 700);
   render();
