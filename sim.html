@@ -36,9 +36,9 @@ details summary{cursor:pointer}
 <div><details><summary>Новый сезон / настройки</summary>
 <div style="display:grid;grid-template-columns:auto auto;gap:4px 8px;margin-top:6px">
 <span>Монеты на старте</span><input id="o-m"><span>Молотки на старте</span><input id="o-s"><span>Осколки</span><input id="o-sh">
-<span>Бонус города к монетам (0.2 = 20%)</span><input id="o-ec"><span>Бонус города к молоткам</span><input id="o-es"><span>💎 за 1 осколок</span><input id="o-dr">
+<span>Бонус города к монетам (0.2 = 20%)</span><input id="o-ec"><span>Бонус города к молоткам</span><input id="o-es"><span>Лот осколков (шт.)</span><input id="o-ln"><span>Цена лота, 💎</span><input id="o-ld">
 </div><div class="btns"><button id="new">Начать сезон заново</button></div>
-<div class="dim">Бриллианты бесконечные: если осколков не хватает, недостаток докупается бриллиантами по курсу выше — счётчик «💎 потрачено» вверху.</div></details></div>
+<div class="dim">Ускорения, расширения и препятствия — всегда за осколки. Если осколков не хватает, они сразу докупаются лотами за бриллианты (бриллианты бесконечные) — счётчик «💎 потрачено» вверху.</div></details></div>
 </div>
 </main>
 <script>// Ядро калькулятора сбора (Квантовые вторжения). Работает и в браузере, и в node (для тестов).
@@ -1094,10 +1094,10 @@ window.QISim = { Sim, DEFS, speedShards };
   const ALL_TILES = []; for (let x = MIN; x < MAX; x += 4) for (let y = MIN; y < MAX; y += 4) ALL_TILES.push({ x, y });
   const COLORS = { residential: '#c9a86a', culture: '#8a6fd1', production: '#5aa36f', goods: '#4f8fcf', military: '#b55a5a', decoration: '#6d8f5e', main_building: '#d4b44a', impediment: '#6b5f55' };
 
-  let chain0 = null; let grab = { x: 0, y: 0 }, tool = null, hint2 = null;   // tool: 'col' — сбор, 'dem' — снос (как в игре: инструмент остаётся, правый клик — выход)
+  let chain0 = null, msgExtra = ''; let grab = { x: 0, y: 0 }, tool = null, hint2 = null;   // tool: 'col' — сбор, 'dem' — снос (как в игре: инструмент остаётся, правый клик — выход)
  let sim, opts, undo = [], diamonds = 0, army = 0, sel = null, placing = null, moving = null, hover = null, hint = null, msg = '';
 
-  function defaults() { return { money: 550000, supplies: 175000, shards: 1640, extC: 0.2, extS: 0.2, diaRate: 1 }; }
+  function defaults() { return { money: 550000, supplies: 175000, shards: 1640, extC: 0.2, extS: 0.2, lotN: 100, lotD: 100 }; }
   function newSim(o) {
     const ents = START.ents.map((e) => ({ ...e, player_id: PID, state: /Townhall/.test(e.cityentity_id)
       ? { __class__: 'ProducingState', next_state_transition_at: T0 + 36000, current_product: { product: { resources: { guild_raids_money: 50000, guild_raids_supplies: 50000, guild_raids_chrono_alloy: 15 } } } }
@@ -1107,15 +1107,15 @@ window.QISim = { Sim, DEFS, speedShards };
   }
   const snap = () => JSON.stringify({ d: sim.dump(), next: sim.nextId, collects: sim.collects.length, diamonds, army, opts });
   function restore(js) {
-    const o = JSON.parse(js); opts = o.opts || defaults();
+    const o = JSON.parse(js); opts = { ...defaults(), ...(o.opts || {}) };
     sim = QISim.Sim.fromDump(o.d, { c: opts.extC, s: opts.extS }); sim.nextId = o.next || sim.nextId; diamonds = o.diamonds || 0; army = o.army || 0;
   }
   function save() { try { localStorage.setItem(LS, snap()); } catch (e) { /* нет места */ } }
   function act(fn, label) {   // любое действие игрока: с отменой
     if (moving) { msg = '⚠ сначала поставьте здание с мышки или Esc'; render(); return false; }
-    const before = snap(); const err = fn();
+    const before = snap(); msgExtra = ''; const err = fn();
     if (err) { msg = '⚠ ' + err; render(); return false; }
-    undo.push(before); if (undo.length > 80) undo.shift(); msg = label || ''; changed(); return true;
+    undo.push(before); if (undo.length > 80) undo.shift(); msg = (label || '') + msgExtra; msgExtra = ''; changed(); return true;
   }
   function changed() { window.qiSim.ver++; save(); render(); }
 
@@ -1123,21 +1123,16 @@ window.QISim = { Sim, DEFS, speedShards };
   window.qiSim = { ver: 1, pid: PID, get t() { return sim.t; }, get seasonEnd() { return T0 + SEASON; }, get ext() { return { c: opts.extC, s: opts.extS }; }, get army() { return army; }, dump: () => sim.dump() };
 
   // ---------- ресурсы с доплатой бриллиантами ----------
-  function payShards(n) {   // не хватает осколков — докупаем бриллиантами (учёт)
-    const R = sim.res; const lack = n - (R.guild_raids_currency || 0);
-    if (lack > 0) { diamonds += Math.ceil(lack * opts.diaRate); R.guild_raids_currency += lack; }
+  function payShards(n) {   // не хватает осколков — автоматически докупаем лотами за бриллианты (учёт в «💎 потрачено»)
+    const R = sim.res; let lots = 0;
+    while ((R.guild_raids_currency || 0) < n) { R.guild_raids_currency += opts.lotN; diamonds += opts.lotD; lots++; }
+    if (lots) msgExtra = ' (докуплено ' + lots * opts.lotN + ' осколков за ' + fmt(lots * opts.lotD) + ' 💎)';
   }
   function speed(e) {
     const d = DEFS[e.cityentity_id]; const constr = !sim.built(e); const c = QISim.speedShards(d, !constr);
-    if (c > (sim.res.guild_raids_currency || 0) && !confirm('Осколков не хватает: доплатить ' + Math.ceil((c - sim.res.guild_raids_currency) * opts.diaRate) + ' 💎?')) return 'мало осколков';
+    if (!constr && !(e.state && e.state.__class__ === 'ProducingState')) return 'нечего ускорять';
     payShards(c); return sim.speed(e.id);
   }
-  function speedDia(e) {    // ускорить только за бриллианты (осколки не трогаем)
-    const d = DEFS[e.cityentity_id]; const constr = !sim.built(e); const c = QISim.speedShards(d, !constr);
-    const keep = sim.res.guild_raids_currency; sim.res.guild_raids_currency = c; const err = sim.speed(e.id);
-    sim.res.guild_raids_currency = keep; if (!err) diamonds += Math.ceil(c * opts.diaRate); return err;
-  }
-
   // ---------- время ----------
   function skip(sec) { act(() => { sim.advance(sec); return null; }, '⏩ +' + (sec >= 3600 ? sec / 3600 + ' ч' : Math.round(sec / 60) + ' мин')); }
   function nextEvent() {
@@ -1302,7 +1297,7 @@ window.QISim = { Sim, DEFS, speedShards };
     if (st === 'ProductionFinishedState') b.push('<button id="b-col">Собрать</button>');
     if (!imp && !th) b.push('<button id="b-dem">Снести (+' + fmt(d.rm) + ' мон.)</button>');
     if (!imp) b.push('<button id="b-mov">Перенести</button>');
-    if (st === 'ConstructionState' || (st === 'ProducingState' && !th)) { const c = QISim.speedShards(d, st !== 'ConstructionState'); if (c) b.push('<button id="b-spd">Ускорить: ' + c + ' осколков</button>', '<button id="b-spdd">Ускорить за 💎 ' + Math.ceil(c * opts.diaRate) + '</button>'); }
+    if (st === 'ConstructionState' || (st === 'ProducingState' && !th)) { const c = QISim.speedShards(d, st !== 'ConstructionState'); if (c) b.push('<button id="b-spd">Ускорить: ' + c + ' осколков</button>'); }
     if (/Ropery/.test(e.cityentity_id) && sim.built(e)) b.push('<button id="b-rope">20 верёвок (70 000 мон. + 56 000 мол.)</button>');
     if (/Catapult|Siege/i.test(e.cityentity_id) && st === 'IdleState') b.push('<button id="b-cat">Катапульты ×10 (35 000 + 28 000)</button>');
     if (/Catapult|Siege/i.test(e.cityentity_id) && st === 'ProductionFinishedState') b.push('<button id="b-catc">Забрать катапульты</button>');
@@ -1313,7 +1308,6 @@ window.QISim = { Sim, DEFS, speedShards };
     on('#b-dem', () => { if (sim.ready(e) && d.m) sim.collect(e.id); const r = sim.demolish(e.id); if (!r) sel = null; return r; }, 'Снесено');
     const mv = $('#b-mov'); if (mv) mv.addEventListener('click', () => { pickUp(e); render(); });
     on('#b-spd', () => speed(e), 'Ускорено');
-    on('#b-spdd', () => speedDia(e), 'Ускорено за бриллианты');
     on('#b-rope', () => sim.ropes(1), '+20 верёвок');
     on('#b-cat', () => { const R = sim.res; if (R.guild_raids_money < 35000 || R.guild_raids_supplies < 28000) return 'не хватает ресурсов'; R.guild_raids_money -= 35000; R.guild_raids_supplies -= 28000; e.state = { __class__: 'ProducingState', next_state_transition_at: sim.t + 60, productionOption: { time: 60 } }; return null; }, 'Катапульты строятся');
     on('#b-catc', () => { army += 10; e.state = { __class__: 'IdleState' }; return null; }, '+10 катапульт');
@@ -1373,6 +1367,7 @@ window.QISim = { Sim, DEFS, speedShards };
       helperSync(H);
       let o; try { o = H.step(); } catch (e) { why = 'ошибка помощника: ' + e.message; break; }
       const c = o.c || {}, n = c.next || {};
+      if (['speed', 'collect', 'produce', 'better', 'final'].includes(n.kind) || (c.batch && c.batch.items && c.batch.items.some((x) => x.kind === 'speed'))) { why = 'подсказка для вас — «' + (n.text || n.kind) + '»'; break; }
       const items = c.batch && c.batch.items && c.batch.items.length > 1 ? c.batch.items : [n];
       const mv = items.filter((x) => x.kind === 'relocate' || x.kind === 'move');
       let err = null;
@@ -1410,13 +1405,13 @@ window.QISim = { Sim, DEFS, speedShards };
   $('#tcol').onclick = () => setTool('col'); $('#tdem').onclick = () => setTool('dem');
   $('#new').onclick = () => {
     const o = defaults(); const f = (id, k) => { const v = parseFloat($(id).value); if (isFinite(v)) o[k] = v; };
-    f('#o-m', 'money'); f('#o-s', 'supplies'); f('#o-sh', 'shards'); f('#o-ec', 'extC'); f('#o-es', 'extS'); f('#o-dr', 'diaRate');
+    f('#o-m', 'money'); f('#o-s', 'supplies'); f('#o-sh', 'shards'); f('#o-ec', 'extC'); f('#o-es', 'extS'); f('#o-ln', 'lotN'); f('#o-ld', 'lotD');
     if (!confirm('Начать сезон заново? Текущий город пропадёт.')) return;
     opts = o; sim = newSim(o); undo = []; diamonds = 0; army = 0; sel = null; msg = 'Новый сезон'; changed();
   };
   try { const s = localStorage.getItem(LS); if (s) restore(s); } catch (e) { sim = null; }
   if (!sim) { opts = defaults(); sim = newSim(opts); }
-  $('#o-m').value = opts.money; $('#o-s').value = opts.supplies; $('#o-sh').value = opts.shards; $('#o-ec').value = opts.extC; $('#o-es').value = opts.extS; $('#o-dr').value = opts.diaRate;
+  $('#o-m').value = opts.money; $('#o-s').value = opts.supplies; $('#o-sh').value = opts.shards; $('#o-ec').value = opts.extC; $('#o-es').value = opts.extS; $('#o-ln').value = opts.lotN; $('#o-ld').value = opts.lotD;
   setInterval(() => { readHint(); draw(); }, 700);
   render();
 })();
