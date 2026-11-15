@@ -1193,6 +1193,7 @@ window.QISim = { Sim, DEFS, speedShards };
     if (e && mode === 'col') { act(() => sim.collect(e.id), 'Собрано'); return; }
     if (e && mode === 'spd') { act(() => speed(e), 'Ускорено'); return; }
     if (e && mode === 'mov') { if (e.cityentity_id.startsWith('I_')) return; moving = e; ghost = { x: e.x, y: e.y }; toast('Тяните тень пальцем или тапните новое место, потом ✓'); render(); return; }
+    if (e && sim.ready(e) && !UNITS[e.cityentity_id]) { const d = DEFS[e.cityentity_id] || {}; act(() => sim.collect(e.id), 'Собрано: ' + d.n + ' (тап ещё раз — карточка)'); return; }   // готовое — тап собирает
     if (e) { openEnt(e); return; }
     const t = ALL_TILES.find((t) => c.x >= t.x && c.x < t.x + 4 && c.y >= t.y && c.y < t.y + 4);
     if (t && !tileOwned(t) && !tileBlocked(t) && tileNear(t)) openTile(t);
