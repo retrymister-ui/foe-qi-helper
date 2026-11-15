@@ -24,7 +24,7 @@ details summary{cursor:pointer}
 <div id="bar">
 <span class="g"><button id="t10m">+10 мин</button><button id="t1">Ускорить 1 час</button><button id="t12">Ускорить 12 часов</button><button id="tev">До следующего события</button></span>
 <span class="g"><button id="cm">Собрать монеты (дома)</button><button id="cs">Собрать молотки</button><button id="ca">Собрать всё</button></span>
-<span class="g"><button id="auto" title="Выполнить подсказки помощника подряд, пока не нужно ждать. Отменяется одной кнопкой «Отменить ход».">▶ Застроить по плану помощника</button><button id="tcol">🧺 Сбор</button><button id="tdem">🔨 Снос</button><button id="undo">↶ Отменить ход</button></span>
+<span class="g"><button id="auto" title="Выполнить подсказки помощника подряд, пока не нужно ждать. Отменяется одной кнопкой «Отменить ход».">▶ Застроить по плану помощника</button><button id="tcol">🧺 Сбор</button><button id="tdem">🔨 Снос</button><button id="undo">↶ Отменить ход</button><button id="game" title="Вернуть город, присланный из игры кнопкой «🧪 В тренажёр»">↺ Как в игре</button></span>
 <span class="g"><span class="dim">Осколки:</span><button class="lot" data-i="0">100 — 120 💎</button><button class="lot" data-i="1">250 — 280 💎</button><button class="lot" data-i="2">1000 — 1050 💎</button></span>
 <span id="msg" class="dim"></span>
 </div>
@@ -1089,7 +1089,9 @@ window.QISim = { Sim, DEFS, speedShards };
 (function () {
   'use strict';
   const DEFS = window.QI_DEFS, START = window.QI_START;
-  const T0 = 1794000000, SEASON = 11 * 86400, PID = 1, LS = 'qiSimState';
+  const T0d = 1794000000, SEASON = 11 * 86400, LS = 'qiSimState';
+  // начало/конец сезона: свой старт или из игры (город, присланный помощником)
+  const end = () => (opts && opts.end) || T0d + SEASON, t0 = () => end() - SEASON;
   const $ = (s) => document.querySelector(s);
   const fmt = (n) => Math.round(n || 0).toLocaleString('ru-RU');
   const CELL = 18, MIN = 500, MAX = 528;
@@ -1101,10 +1103,10 @@ window.QISim = { Sim, DEFS, speedShards };
 
   function defaults() { return { money: 550000, supplies: 175000, shards: 1640, extC: 0.2, extS: 0.2, buy: 'ask' }; }
   function newSim(o) {
-    const ents = START.ents.map((e) => ({ ...e, player_id: PID, state: /Townhall/.test(e.cityentity_id)
-      ? { __class__: 'ProducingState', next_state_transition_at: T0 + 36000, current_product: { product: { resources: { guild_raids_money: 50000, guild_raids_supplies: 50000, guild_raids_chrono_alloy: 15 } } } }
+    const ents = START.ents.map((e) => ({ ...e, player_id: 1, state: /Townhall/.test(e.cityentity_id)
+      ? { __class__: 'ProducingState', next_state_transition_at: T0d + 36000, current_product: { product: { resources: { guild_raids_money: 50000, guild_raids_supplies: 50000, guild_raids_chrono_alloy: 15 } } } }
       : { __class__: 'IdleState' } }));
-    return new QISim.Sim({ t: T0, ents, areas: START.areas, blocked: START.blocked, ext: { c: o.extC, s: o.extS },
+    return new QISim.Sim({ t: T0d, ents, areas: START.areas, blocked: START.blocked, ext: { c: o.extC, s: o.extS },
       res: { guild_raids_money: o.money, guild_raids_supplies: o.supplies, guild_raids_chrono_alloy: 0, guild_raids_currency: o.shards, guild_raids_rope: 0 } });
   }
   const snap = () => JSON.stringify({ d: sim.dump(), next: sim.nextId, collects: sim.collects.length, diamonds, army, armyCan, coll, opts });
@@ -1122,7 +1124,7 @@ window.QISim = { Sim, DEFS, speedShards };
   function changed() { window.qiSim.ver++; save(); render(); }
 
   // помощнику: снимок города, время, бонусы
-  window.qiSim = { ver: 1, pid: PID, get t() { return sim.t; }, get seasonEnd() { return T0 + SEASON; }, get ext() { return { c: opts.extC, s: opts.extS }; }, get army() { return army + armyCan; }, get collN() { return coll.n; }, diaBudget: 200000, dump: () => sim.dump() };
+  window.qiSim = { ver: 1, get pid() { return (opts && opts.pid) || 1; }, get t() { return sim.t; }, get seasonEnd() { return end(); }, get ext() { return { c: opts.extC, s: opts.extS }; }, get army() { return army + armyCan; }, get collN() { return coll.n; }, get diaBudget() { return opts && opts.fromGame ? Math.max(opts.diaBudget || 0, 200000) : 200000; }, dump: () => sim.dump() };
 
   // ---------- ресурсы с доплатой бриллиантами ----------
   // лоты игры: 100 осколков — 120 💎, 250 — 280 💎, 1000 — 1050 💎; докупаем самый дешёвый набор, покрывающий нехватку
@@ -1176,7 +1178,7 @@ window.QISim = { Sim, DEFS, speedShards };
     if (!isFinite(nx)) { msg = 'Нет событий впереди'; render(); return; }
     skip(nx - sim.t);
   }
-  const clock = (t) => { const s = t - T0, d = Math.floor(s / 86400) + 1, h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60); return 'день ' + d + ', ' + String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0'); };
+  const clock = (t) => { const s = t - t0(), d = Math.floor(s / 86400) + 1, h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60); return 'день ' + d + ', ' + String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0'); };
   const left = (e) => { const a = e.state && e.state.next_state_transition_at; if (!a) return ''; const s = Math.max(0, a - sim.t); return s >= 3600 ? Math.floor(s / 3600) + ' ч ' + Math.floor((s % 3600) / 60) + ' мин' : Math.ceil(s / 60) + ' мин'; };
 
   // ---------- карта ----------
@@ -1299,7 +1301,7 @@ window.QISim = { Sim, DEFS, speedShards };
   function topBar() {
     const st = sim.stats(), R = sim.res;
     $('#res').innerHTML = [
-      ['🕒', clock(sim.t) + ' <span class="dim">(до конца ' + Math.max(0, Math.ceil((T0 + SEASON - sim.t) / 86400)) + ' дн)</span>'],
+      ['🕒', clock(sim.t) + ' <span class="dim">(до конца ' + Math.max(0, Math.ceil((end() - sim.t) / 86400)) + ' дн)</span>'],
       ['Монеты', fmt(R.guild_raids_money)], ['Молотки', fmt(R.guild_raids_supplies)], ['Хроно', fmt(R.guild_raids_chrono_alloy)],
       ['Осколки', fmt(R.guild_raids_currency)], ['Верёвки', fmt(R.guild_raids_rope)], ['💎 потрачено', fmt(diamonds)],
       ['Эйфория', (isFinite(st.ratio) ? Math.round(st.ratio * 100) + '%' : '—') + ' <span class="dim">×' + st.mf + '</span>'],
@@ -1421,11 +1423,32 @@ window.QISim = { Sim, DEFS, speedShards };
     changed();
   }
 
+  // ---------- город из игры (кнопка «🧪 В тренажёр» в помощнике) ----------
+  let gameSnap = null;
+  function loadGame(g) {
+    if (moving) cancelMove();
+    if (!confirm('Загрузить город из игры в тренажёр? Текущий тренажёрный город заменится (в игре ничего не меняется).')) return;
+    opts = { ...defaults(), extC: (g.ext && g.ext.c) || 0, extS: (g.ext && g.ext.s) || 0, end: g.seasonEnd || (g.t + 5 * 86400), pid: g.pid || 1, fromGame: true, diaBudget: g.diaBudget || 0 };
+    sim = QISim.Sim.fromDump({ t: new Date(g.t * 1000).toISOString(), ents: g.ents, res: g.res, areas: g.areas, blocked: g.blocked, expCosts: g.expCosts, goodsCosts: g.goodsCosts, impCost: g.impCost }, { c: opts.extC, s: opts.extS });
+    army = g.army || 0; armyCan = 0; coll = { n: g.collN || 0, t: 0 }; diamonds = 0; undo = []; sel = null; placing = null; tool = null; hookSim();
+    // настройки помощника из игры (стратегия, пекарни, армия…) — тому же помощнику на странице тренажёра
+    try { const H = window.foeQiHelper; const c0 = JSON.parse(localStorage.getItem('foeQiHelperCfg') || '{}'); const nc = { ...c0, ...(g.cfg || {}), speedNo: undefined, speedDone: undefined, final: undefined };
+      localStorage.setItem('foeQiHelperCfg', JSON.stringify(nc)); if (H && H.cfg) Object.assign(H.cfg, g.cfg || {}, { speedNo: undefined, speedDone: undefined, final: undefined }); } catch (e) { /* */ }
+    gameSnap = snap(); try { localStorage.setItem(LS + 'Game', gameSnap); } catch (e) { /* */ }
+    msg = 'Загружен город из игры (' + clock(sim.t) + '). «↺ Как в игре» — вернуться к нему.'; changed();
+  }
+  window.addEventListener('message', (ev) => {
+    let host = ''; try { host = new URL(ev.origin).host; } catch (e) { return; }
+    if (!/(^|\.)forgeofempires\.com$/.test(host) || !ev.data || ev.data.type !== 'qiSimLoad') return;
+    loadGame(ev.data.d);
+  });
+  if (window.opener) { try { window.opener.postMessage({ type: 'qiSimReady' }, '*'); } catch (e) { /* */ } }
+
   // ---------- сводка ----------
   function summary() {
     const cnt = {}; sim.ents.forEach((e) => { const n = (DEFS[e.cityentity_id] || {}).n; if (n && !/Препятствие|Ратуша/.test(n)) cnt[n] = (cnt[n] || 0) + 1; });
-    const last = sim.collects.slice(-400); const win = {}; last.forEach((c) => { const k = Math.floor((c.t - T0) / 3600); win[k] = win[k] || { m: 0, s: 0, c: 0 }; win[k].m += c.m; win[k].s += c.s; win[k].c += c.c; });
-    const rows = Object.entries(win).slice(-6).reverse().map(([h, o]) => '<tr><td>' + clock(T0 + h * 3600).replace(/:\d\d$/, ':00') + '</td><td>' + fmt(o.m) + '</td><td>' + fmt(o.s) + '</td><td>' + fmt(o.c) + '</td></tr>').join('');
+    const last = sim.collects.slice(-400); const win = {}; last.forEach((c) => { const k = Math.floor((c.t - t0()) / 3600); win[k] = win[k] || { m: 0, s: 0, c: 0 }; win[k].m += c.m; win[k].s += c.s; win[k].c += c.c; });
+    const rows = Object.entries(win).slice(-6).reverse().map(([h, o]) => '<tr><td>' + clock(t0() + h * 3600).replace(/:\d\d$/, ':00') + '</td><td>' + fmt(o.m) + '</td><td>' + fmt(o.s) + '</td><td>' + fmt(o.c) + '</td></tr>').join('');
     $('#sum').innerHTML = '<div class="grp">Состав</div>' + Object.entries(cnt).sort((a, b) => b[1] - a[1]).map(([n, k]) => '<div>' + n + ': <b>' + k + '</b></div>').join('') +
       '<div class="grp">Сборы по часам</div><table><tr><th>час</th><th>монеты</th><th>молотки</th><th>хроно</th></tr>' + rows + '</table>';
   }
@@ -1434,7 +1457,8 @@ window.QISim = { Sim, DEFS, speedShards };
   // ---------- кнопки ----------
   $('#t1').onclick = () => skip(3600); $('#t12').onclick = () => skip(12 * 3600); $('#t10m').onclick = () => skip(600); $('#tev').onclick = nextEvent;
   $('#cm').onclick = () => collectAll('m'); $('#cs').onclick = () => collectAll('s'); $('#ca').onclick = () => collectAll('a');
-  $('#undo').onclick = doUndo; document.querySelectorAll('.lot').forEach((b) => { b.onclick = () => buyLot(+b.dataset.i); });
+  $('#undo').onclick = doUndo;
+  $('#game').onclick = () => { const g = gameSnap || localStorage.getItem(LS + 'Game'); if (!g) { msg = 'Города из игры нет: нажмите «🧪 В тренажёр» в помощнике в игре'; render(); return; } if (moving) cancelMove(); undo.push(snap()); restore(g); msg = '↺ Город как в игре'; changed(); }; document.querySelectorAll('.lot').forEach((b) => { b.onclick = () => buyLot(+b.dataset.i); });
   $('#o-buy').onchange = () => { opts.buy = $('#o-buy').value; save(); }; $('#auto').onclick = autoPlan;
   const setTool = (t) => { if (moving) cancelMove(); tool = tool === t ? null : t; placing = null; moving = null; sel = null; msg = tool === 'col' ? 'Сбор: левый клик по зданию — собрать, правый клик — выход' : tool === 'dem' ? 'Снос: левый клик по зданию — снести, правый клик — выход' : ''; render(); };
   $('#tcol').onclick = () => setTool('col'); $('#tdem').onclick = () => setTool('dem');
