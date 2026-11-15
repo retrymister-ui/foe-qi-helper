@@ -36,9 +36,9 @@ details summary{cursor:pointer}
 <div><details><summary>Новый сезон / настройки</summary>
 <div style="display:grid;grid-template-columns:auto auto;gap:4px 8px;margin-top:6px">
 <span>Монеты на старте</span><input id="o-m"><span>Молотки на старте</span><input id="o-s"><span>Осколки</span><input id="o-sh">
-<span>Бонус города к монетам (0.2 = 20%)</span><input id="o-ec"><span>Бонус города к молоткам</span><input id="o-es"><span>Лот осколков (шт.)</span><input id="o-ln"><span>Цена лота, 💎</span><input id="o-ld">
+<span>Бонус города к монетам (0.2 = 20%)</span><input id="o-ec"><span>Бонус города к молоткам</span><input id="o-es">
 </div><div class="btns"><button id="new">Начать сезон заново</button></div>
-<div class="dim">Ускорения, расширения и препятствия — всегда за осколки. Если осколков не хватает, они сразу докупаются лотами за бриллианты (бриллианты бесконечные) — счётчик «💎 потрачено» вверху.</div></details></div>
+<div class="dim">Ускорения, расширения и препятствия — всегда за осколки. Если осколков не хватает, они сразу докупаются самым дешёвым набором лотов игры (100 — 120 💎, 250 — 280 💎, 1000 — 1050 💎) (бриллианты бесконечные) — счётчик «💎 потрачено» вверху.</div></details></div>
 </div>
 </main>
 <script>// Ядро калькулятора сбора (Квантовые вторжения). Работает и в браузере, и в node (для тестов).
@@ -1097,7 +1097,7 @@ window.QISim = { Sim, DEFS, speedShards };
   let chain0 = null, msgExtra = ''; let grab = { x: 0, y: 0 }, tool = null, hint2 = null;   // tool: 'col' — сбор, 'dem' — снос (как в игре: инструмент остаётся, правый клик — выход)
  let sim, opts, undo = [], diamonds = 0, army = 0, sel = null, placing = null, moving = null, hover = null, hint = null, msg = '';
 
-  function defaults() { return { money: 550000, supplies: 175000, shards: 1640, extC: 0.2, extS: 0.2, lotN: 100, lotD: 100 }; }
+  function defaults() { return { money: 550000, supplies: 175000, shards: 1640, extC: 0.2, extS: 0.2 }; }
   function newSim(o) {
     const ents = START.ents.map((e) => ({ ...e, player_id: PID, state: /Townhall/.test(e.cityentity_id)
       ? { __class__: 'ProducingState', next_state_transition_at: T0 + 36000, current_product: { product: { resources: { guild_raids_money: 50000, guild_raids_supplies: 50000, guild_raids_chrono_alloy: 15 } } } }
@@ -1123,10 +1123,20 @@ window.QISim = { Sim, DEFS, speedShards };
   window.qiSim = { ver: 1, pid: PID, get t() { return sim.t; }, get seasonEnd() { return T0 + SEASON; }, get ext() { return { c: opts.extC, s: opts.extS }; }, get army() { return army; }, dump: () => sim.dump() };
 
   // ---------- ресурсы с доплатой бриллиантами ----------
-  function payShards(n) {   // не хватает осколков — автоматически докупаем лотами за бриллианты (учёт в «💎 потрачено»)
-    const R = sim.res; let lots = 0;
-    while ((R.guild_raids_currency || 0) < n) { R.guild_raids_currency += opts.lotN; diamonds += opts.lotD; lots++; }
-    if (lots) msgExtra = ' (докуплено ' + lots * opts.lotN + ' осколков за ' + fmt(lots * opts.lotD) + ' 💎)';
+  // лоты игры: 100 осколков — 120 💎, 250 — 280 💎, 1000 — 1050 💎; докупаем самый дешёвый набор, покрывающий нехватку
+  const LOTS = [[100, 120], [250, 280], [1000, 1050]];
+  function cheapest(need) {
+    let best = null;
+    for (let a = 0; a <= Math.ceil(need / 1000); a++) for (let b = 0; b <= Math.ceil(need / 250); b++) {
+      const rest = Math.max(0, need - a * 1000 - b * 250), c = Math.ceil(rest / 100), cost = a * 1050 + b * 280 + c * 120;
+      if (!best || cost < best.cost) best = { cost, n: a * 1000 + b * 250 + c * 100, k: [c, b, a] };
+    }
+    return best;
+  }
+  function payShards(n) {   // не хватает осколков — сразу докупаем лотами за бриллианты (учёт в «💎 потрачено»)
+    const R = sim.res, lack = n - (R.guild_raids_currency || 0); if (lack <= 0) return;
+    const b = cheapest(lack); R.guild_raids_currency += b.n; diamonds += b.cost;
+    msgExtra = ' (докуплено ' + b.k.map((k, i) => k ? k + '×' + LOTS[i][0] : '').filter(Boolean).join(' + ') + ' осколков за ' + fmt(b.cost) + ' 💎)';
   }
   function speed(e) {
     const d = DEFS[e.cityentity_id]; const constr = !sim.built(e); const c = QISim.speedShards(d, !constr);
@@ -1405,13 +1415,13 @@ window.QISim = { Sim, DEFS, speedShards };
   $('#tcol').onclick = () => setTool('col'); $('#tdem').onclick = () => setTool('dem');
   $('#new').onclick = () => {
     const o = defaults(); const f = (id, k) => { const v = parseFloat($(id).value); if (isFinite(v)) o[k] = v; };
-    f('#o-m', 'money'); f('#o-s', 'supplies'); f('#o-sh', 'shards'); f('#o-ec', 'extC'); f('#o-es', 'extS'); f('#o-ln', 'lotN'); f('#o-ld', 'lotD');
+    f('#o-m', 'money'); f('#o-s', 'supplies'); f('#o-sh', 'shards'); f('#o-ec', 'extC'); f('#o-es', 'extS'); 
     if (!confirm('Начать сезон заново? Текущий город пропадёт.')) return;
     opts = o; sim = newSim(o); undo = []; diamonds = 0; army = 0; sel = null; msg = 'Новый сезон'; changed();
   };
   try { const s = localStorage.getItem(LS); if (s) restore(s); } catch (e) { sim = null; }
   if (!sim) { opts = defaults(); sim = newSim(opts); }
-  $('#o-m').value = opts.money; $('#o-s').value = opts.supplies; $('#o-sh').value = opts.shards; $('#o-ec').value = opts.extC; $('#o-es').value = opts.extS; $('#o-ln').value = opts.lotN; $('#o-ld').value = opts.lotD;
+  $('#o-m').value = opts.money; $('#o-s').value = opts.supplies; $('#o-sh').value = opts.shards; $('#o-ec').value = opts.extC; $('#o-es').value = opts.extS; 
   setInterval(() => { readHint(); draw(); }, 700);
   render();
 })();
