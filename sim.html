@@ -24,11 +24,11 @@ details summary{cursor:pointer}
 <div id="bar">
 <button id="t10m">+10 мин</button><button id="t1">Ускорить 1 час</button><button id="t12">Ускорить 12 часов</button><button id="tev">До следующего события</button>
 <span style="width:12px"></span><button id="cm">Собрать монеты (дома)</button><button id="cs">Собрать молотки</button><button id="ca">Собрать всё</button>
-<span style="width:12px"></span><button id="tcol">🧺 Сбор</button><button id="tdem">🔨 Снос</button><span style="width:12px"></span><button id="undo">↶ Отменить ход</button><span id="msg" class="dim"></span>
+<span style="width:12px"></span><button id="auto" title="Выполнить подсказки помощника подряд, пока не нужно ждать. Отменяется одной кнопкой «Отменить ход».">▶ Застроить по плану помощника</button><button id="tcol">🧺 Сбор</button><button id="tdem">🔨 Снос</button><span style="width:12px"></span><button id="undo">↶ Отменить ход</button><span id="msg" class="dim"></span>
 </div>
 <main>
 <div id="pal"></div>
-<div><canvas id="map"></canvas><div class="dim">Левый клик — собрать готовое здание / выбрать здание или участок «+». <b>Ctrl + правый клик — снести</b> (или Delete для выбранного). <b>Правый клик по зданию — взять для переноса, левый клик — поставить.</b> «🧺 Сбор» / «🔨 Снос» — левый клик по зданиям, правый — выход. Esc — отмена. Ctrl+Z — отменить ход.</div></div>
+<div><canvas id="map"></canvas><div class="dim">Левый клик — собрать готовое здание / выбрать здание или участок «+». <b>Ctrl + правый клик — снести</b> (или Delete для выбранного). <b>Правый клик по зданию — взять, левый клик — поставить; если на месте другое здание — оно встаёт на мышку (цепочка), Esc — вернуть всю цепочку.</b> «🧺 Сбор» / «🔨 Снос» — левый клик по зданиям, правый — выход. Esc — отмена. Ctrl+Z — отменить ход.</div></div>
 <div id="side">
 <div id="hh">Помощник…</div>
 <div id="sel"></div>
@@ -1094,7 +1094,7 @@ window.QISim = { Sim, DEFS, speedShards };
   const ALL_TILES = []; for (let x = MIN; x < MAX; x += 4) for (let y = MIN; y < MAX; y += 4) ALL_TILES.push({ x, y });
   const COLORS = { residential: '#c9a86a', culture: '#8a6fd1', production: '#5aa36f', goods: '#4f8fcf', military: '#b55a5a', decoration: '#6d8f5e', main_building: '#d4b44a', impediment: '#6b5f55' };
 
-  let grab = { x: 0, y: 0 }, tool = null, hint2 = null;   // tool: 'col' — сбор, 'dem' — снос (как в игре: инструмент остаётся, правый клик — выход)
+  let chain0 = null; let grab = { x: 0, y: 0 }, tool = null, hint2 = null;   // tool: 'col' — сбор, 'dem' — снос (как в игре: инструмент остаётся, правый клик — выход)
  let sim, opts, undo = [], diamonds = 0, army = 0, sel = null, placing = null, moving = null, hover = null, hint = null, msg = '';
 
   function defaults() { return { money: 550000, supplies: 175000, shards: 1640, extC: 0.2, extS: 0.2, diaRate: 1 }; }
@@ -1112,6 +1112,7 @@ window.QISim = { Sim, DEFS, speedShards };
   }
   function save() { try { localStorage.setItem(LS, snap()); } catch (e) { /* нет места */ } }
   function act(fn, label) {   // любое действие игрока: с отменой
+    if (moving) { msg = '⚠ сначала поставьте здание с мышки или Esc'; render(); return false; }
     const before = snap(); const err = fn();
     if (err) { msg = '⚠ ' + err; render(); return false; }
     undo.push(before); if (undo.length > 80) undo.shift(); msg = label || ''; changed(); return true;
@@ -1186,18 +1187,36 @@ window.QISim = { Sim, DEFS, speedShards };
     // призрак постройки/переноса
     const g = !tool && (placing || (moving && moving.cityentity_id));
     if (g && hover) {
-      const d = DEFS[g], gx = hover.x - (moving ? grab.x : 0), gy = hover.y - (moving ? grab.y : 0); const ok = sim.fits(g, gx, gy, moving ? moving.id : undefined);
+      const d = DEFS[g], gx = hover.x - (moving ? grab.x : 0), gy = hover.y - (moving ? grab.y : 0); const ok = sim.fits(g, gx, gy);
       cx.fillStyle = ok ? 'rgba(120,255,140,.45)' : 'rgba(255,90,90,.45)'; cx.fillRect(px(gx), px(gy), d.w * CELL, d.h * CELL);
     }
   }
   const short = (n) => ({ 'Многоэтажный дом': 'М', 'Усадьба': 'У', 'Каркасный дом': 'Карк', 'Дом с гонтовой кровлей': 'ГК', 'Церковь': 'Церк', 'Пекарня': 'Пек', 'Лаборатория алхимика': 'Алх', 'Дом картографа': 'Карт', 'Дом лекаря': 'Лек', 'Позорный столб': 'Столб', 'Пивоварня': 'Пив', 'Канатная мастерская': 'Канаты', 'Мастерская катапульт': 'Катап', 'Ратуша': 'Ратуша', 'Препятствие': '✕' }[n] || n.slice(0, 6));
 
+  // перенос цепочкой: взятое здание снимается с карты; если ставим на чужое здание — оно встаёт на мышку (если взятое влезает на освободившееся место)
+  function pickUp(e, c) { if (!chain0) chain0 = snap(); sim.ents.delete(e.id); moving = e; grab = c ? { x: c.x - e.x, y: c.y - e.y } : { x: 0, y: 0 }; sel = null; placing = null; tool = null;
+    msg = 'Перенос: ' + (DEFS[e.cityentity_id] || {}).n + ' — левый клик, куда поставить; Esc — вернуть всё как было'; window.qiSim.ver++; }
+  function cancelMove() { if (chain0) { restore(chain0); chain0 = null; moving = null; msg = 'Перенос отменён'; changed(); } moving = null; }
+  function dropAt(c) {
+    const e = moving, d = DEFS[e.cityentity_id], x = c.x - grab.x, y = c.y - grab.y, cells = sim.cells(), occ = sim.occupied(), hit = new Set();
+    for (let i = x; i < x + d.w; i++) for (let j = y; j < y + d.h; j++) { const k = i + ',' + j; if (!cells.has(k)) { msg = '⚠ вне поля'; render(); return; } if (occ.has(k)) hit.add(occ.get(k)); }
+    if (hit.size > 1) { msg = '⚠ здесь ' + hit.size + ' здания — меняться можно только с одним'; render(); return; }
+    if (hit.size === 1) {
+      const o = sim.ents.get([...hit][0]);
+      if (o.cityentity_id.startsWith('I_')) { msg = '⚠ препятствие не переносится'; render(); return; }
+      e.x = x; e.y = y; sim.ents.set(e.id, e); pickUp(o, c); render(); return;   // взятое встало, на мышке — то, что стояло
+    }
+    e.x = x; e.y = y; sim.ents.set(e.id, e); moving = null;
+    if (chain0) { undo.push(chain0); if (undo.length > 80) undo.shift(); chain0 = null; }
+    msg = 'Перенесено: ' + d.n; changed();
+  }
   function cellOf(ev) { const r = cv.getBoundingClientRect(); return { x: MIN + Math.floor((ev.clientX - r.left) / CELL), y: MIN + Math.floor((ev.clientY - r.top) / CELL) }; }
   cv.addEventListener('mousemove', (ev) => { if (tool) { const c = cellOf(ev); const e = entAt(c.x, c.y); hint2 = e; draw(); return; } if (!placing && !moving) return; hover = cellOf(ev); draw(); });
   cv.addEventListener('mouseleave', () => { hover = null; draw(); });
   // правый клик по зданию — взять для переноса, левый клик — поставить; правый клик по пустому месту — отмена
   cv.addEventListener('contextmenu', (ev) => {
     ev.preventDefault(); if (tool) { tool = null; msg = ''; render(); return; }
+    if (moving) { cancelMove(); return; }
     if (ev.ctrlKey && !placing && !moving) {   // Ctrl + правый клик — снести здание
       const c0 = cellOf(ev), e0 = entAt(c0.x, c0.y);
       if (e0) { const d = DEFS[e0.cityentity_id] || {}; act(() => { if (sim.ready(e0) && d.m) sim.collect(e0.id); const r = sim.demolish(e0.id); if (!r && sel && sel.id === e0.id) sel = null; return r; }, 'Снесено: ' + d.n + ' (+' + fmt(d.rm) + ' мон.)'); }
@@ -1205,13 +1224,13 @@ window.QISim = { Sim, DEFS, speedShards };
     }
     const c = cellOf(ev); const e = !placing && !moving && entAt(c.x, c.y);
     placing = null; moving = null;
-    if (e && !e.cityentity_id.startsWith('I_')) { moving = e; grab = { x: c.x - e.x, y: c.y - e.y }; sel = null; hover = c; msg = 'Перенос: ' + (DEFS[e.cityentity_id] || {}).n + ' — левый клик, куда поставить'; }
+    if (e && !e.cityentity_id.startsWith('I_')) { pickUp(e, c); hover = c; }
     render();
   });
   cv.addEventListener('click', (ev) => {
     const c = cellOf(ev);
     if (placing) { const t = placing; act(() => sim.place(t, c.x, c.y), 'Поставлено: ' + DEFS[t].n + ' — можно ставить ещё, правый клик — отмена'); render(); return; }   // здание остаётся на мышке
-    if (moving) { const e = moving, d = DEFS[e.cityentity_id]; moving = null; act(() => sim.move(e.id, c.x - grab.x, c.y - grab.y), 'Перенесено: ' + d.n); return; }
+    if (moving) { dropAt(c); return; }
     const e = entAt(c.x, c.y);
     if (tool && e) {
       const d = DEFS[e.cityentity_id] || {};
@@ -1231,7 +1250,7 @@ window.QISim = { Sim, DEFS, speedShards };
   });
   document.addEventListener('keydown', (ev) => {
     if (ev.target.tagName === 'INPUT') return;
-    if (ev.key === 'Escape') { placing = null; moving = null; sel = null; tool = null; render(); }
+    if (ev.key === 'Escape') { if (moving) { cancelMove(); return; } placing = null; sel = null; tool = null; render(); }
     if (ev.key === 'z' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); doUndo(); }
     if ((ev.key === 'Delete' || ev.key === 'Backspace') && sel && sel.id && sim.ents.has(sel.id)) {   // Delete — снести выбранное здание
       ev.preventDefault(); const e = sim.ents.get(sel.id), d = DEFS[e.cityentity_id] || {};
@@ -1256,7 +1275,7 @@ window.QISim = { Sim, DEFS, speedShards };
     $('#pal').innerHTML = groups.map(([g, cat]) => '<div class="grp">' + g + '</div>' + Object.entries(DEFS).filter(([k, d]) => d.cat === cat && k.startsWith('W_') && !seen.has(d.n) && seen.add(d.n)).map(([k, d]) =>
       '<button class="pb' + (placing === k ? ' on' : '') + '" data-t="' + k + '" title="' + d.w + '×' + d.h + (d.eu ? ', эйфория ' + d.eu : '') + (d.pop ? ', жители ' + d.pop : '') + (d.m ? ', монеты ' + fmt(d.m) : '') + (d.s ? ', молотки ' + fmt(d.s) : '') + (d.c ? ', хроно ' + d.c : '') + ', стройка ' + Math.round((d.t || 5) / 60) + ' мин">' +
       '<span>' + d.n + '</span><span class="dim">' + [d.cm && fmt(d.cm) + 'м', d.cs && fmt(d.cs) + 'мл', d.cc && d.cc + 'х'].filter(Boolean).join(' ') + '</span></button>').join('')).join('');
-    $('#pal').querySelectorAll('.pb').forEach((b) => b.addEventListener('click', () => { placing = placing === b.dataset.t ? null : b.dataset.t; moving = null; sel = null; render(); }));
+    $('#pal').querySelectorAll('.pb').forEach((b) => b.addEventListener('click', () => { if (moving) cancelMove(); placing = placing === b.dataset.t ? null : b.dataset.t; moving = null; sel = null; render(); }));
   }
   function info() {
     const box = $('#sel');
@@ -1286,7 +1305,7 @@ window.QISim = { Sim, DEFS, speedShards };
       '<div class="dim">' + [d.pop && 'жители ' + d.pop, d.eu && 'эйфория ' + d.eu, d.m && 'монеты ' + fmt(d.m), d.s && 'молотки ' + fmt(d.s), d.c && 'хроно ' + d.c, d.bm && 'бонус монет +' + d.bm * 100 + '%', d.bs && 'бонус молотков +' + d.bs * 100 + '%'].filter(Boolean).join(', ') + '</div><div class="btns">' + b.join('') + '</div>';
     on('#b-col', () => (/Catapult|Siege/i.test(e.cityentity_id) ? 'нечего' : sim.collect(e.id)), 'Собрано');
     on('#b-dem', () => { if (sim.ready(e) && d.m) sim.collect(e.id); const r = sim.demolish(e.id); if (!r) sel = null; return r; }, 'Снесено');
-    const mv = $('#b-mov'); if (mv) mv.addEventListener('click', () => { moving = e; grab = { x: 0, y: 0 }; sel = null; render(); });
+    const mv = $('#b-mov'); if (mv) mv.addEventListener('click', () => { pickUp(e); render(); });
     on('#b-spd', () => speed(e), 'Ускорено');
     on('#b-spdd', () => speedDia(e), 'Ускорено за бриллианты');
     on('#b-rope', () => sim.ropes(1), '+20 верёвок');
@@ -1298,7 +1317,7 @@ window.QISim = { Sim, DEFS, speedShards };
   function collectAll(kind) {
     act(() => { let n = 0; sim.ents.forEach((e) => { const d = DEFS[e.cityentity_id] || {}; if (!sim.ready(e) || /Catapult|Siege/i.test(e.cityentity_id)) return; if (kind === 'm' ? (d.m || e.cityentity_id.startsWith('H_')) : kind === 's' ? d.s : true) { sim.collect(e.id); n++; } }); return n ? null : 'нечего собирать'; }, 'Собрано');
   }
-  function doUndo() { const s = undo.pop(); if (!s) { msg = 'Отменять нечего'; render(); return; } restore(s); msg = '↶ отменено'; sel = null; changed(); }
+  function doUndo() { if (moving) { cancelMove(); return; } const s = undo.pop(); if (!s) { msg = 'Отменять нечего'; render(); return; } restore(s); msg = '↶ отменено'; sel = null; changed(); }
 
   // ---------- подсказка помощника на карте ----------
   let hintVer = -1;
@@ -1317,6 +1336,56 @@ window.QISim = { Sim, DEFS, speedShards };
   }
   const placingType = (k) => ({ bake: 'W_GuildRaidsEarlyMiddleAge_Bakery', brew: 'W_GuildRaidsLateMiddleAge_Brewery', church: 'W_GuildRaidsHighMiddleAge_Church' }[k]);
 
+  // ---------- «Застроить по плану помощника»: выполняем его шаги, пока не придётся ждать ----------
+  const TYPE_OF = { bake: 'W_GuildRaidsEarlyMiddleAge_Bakery', brew: 'W_GuildRaidsLateMiddleAge_Brewery', church: 'W_GuildRaidsHighMiddleAge_Church' };
+  function helperSync(H) {
+    const d = sim.dump(), S = H.S;
+    S.ents = new Map(d.ents.map((e) => [e.id, e])); S.res = d.res; S.areas = d.areas; S.blocked = d.blocked; S.expCosts = d.expCosts; S.goodsCosts = d.goodsCosts; S.impCost = d.impCost; S.ver = (S.ver || 0) + 1;
+  }
+  function execStep(n, mode, tiles) {
+    const k = n.kind, txt = n.text || '', id = n.ent && n.ent.id, to = n.to || n.pos;
+    if (mode === 'expand' && tiles && tiles.length) { const c = sim.expCosts[0]; if (c != null) payShards(c); return sim.expand(tiles[0].x, tiles[0].y, false); }
+    if (k === 'place' || k === 'house' || k === 'bake' || k === 'brew' || k === 'church') { const t = n.t || (n.slot && n.slot.t) || TYPE_OF[k], sp = n.spot || n.slot; return sp ? sim.place(t, sp.x, sp.y) : 'нет места в подсказке'; }
+    if (k === 'demolish') { const e = sim.ents.get(id); if (e && (DEFS[e.cityentity_id] || {}).m && sim.ready(e)) sim.collect(id); return sim.demolish(id); }
+    if (k === 'relocate' || k === 'move') return to ? sim.move(id, to.x, to.y) : 'нет места';
+    if (k === 'speed') { const e = sim.ents.get(id); return e ? speed(e) : 'нет здания'; }
+    if (k === 'imp') { payShards(sim.impCost); return sim.removeImpediment(id); }
+    if (k === 'gexpand' && n.tile) return sim.expand(n.tile.x, n.tile.y, true);
+    if (k === 'produce') { const e = sim.ents.get(id); if (e && /Ropery/.test(e.cityentity_id)) return sim.ropes(1); if (e && /Catapult|Siege/i.test(e.cityentity_id)) { const R = sim.res; if (R.guild_raids_money < 35000 || R.guild_raids_supplies < 28000) return 'не хватает ресурсов'; R.guild_raids_money -= 35000; R.guild_raids_supplies -= 28000; e.state = { __class__: 'ProducingState', next_state_transition_at: sim.t + 60, productionOption: { time: 60 } }; return null; } return 'stop'; }
+    if (k === 'collect' && id != null) { const e = sim.ents.get(id); if (e && /Catapult|Siege/i.test(e.cityentity_id) && sim.ready(e)) { army += 10; e.state = { __class__: 'IdleState' }; return null; } return sim.collect(id); }
+    if (k === 'collect' && /дома|все ресурсы|монеты|молотки/.test(txt) && !/Ждите/.test(txt)) {
+      let c = 0; sim.ents.forEach((e) => { const d = DEFS[e.cityentity_id] || {}; if (!sim.ready(e) || /Catapult|Siege/i.test(e.cityentity_id)) return; if (/молотки/.test(txt) ? d.s : /все ресурсы/.test(txt) ? true : (d.m || e.cityentity_id.startsWith('H_'))) { sim.collect(e.id); c++; } });
+      return c ? null : 'stop';
+    }
+    return 'stop';
+  }
+  function autoPlan() {
+    const H = window.foeQiHelper; if (!H || !H.step) { msg = '⚠ помощник не найден'; render(); return; }
+    if (moving) cancelMove();
+    const before = snap(); let done = 0, why = '', lastSig = '';
+    for (let i = 0; i < 400; i++) {
+      helperSync(H);
+      let o; try { o = H.step(); } catch (e) { why = 'ошибка помощника: ' + e.message; break; }
+      const c = o.c || {}, n = c.next || {};
+      const items = c.batch && c.batch.items && c.batch.items.length > 1 ? c.batch.items : [n];
+      const mv = items.filter((x) => x.kind === 'relocate' || x.kind === 'move');
+      let err = null;
+      if (c.mode !== 'expand' && mv.length > 1) {
+        err = sim.moveMany(mv.map((x) => ({ id: x.ent.id, x: (x.to || x.pos).x, y: (x.to || x.pos).y })));
+        if (!err) for (const it of items.filter((x) => !mv.includes(x))) { err = execStep(it); if (err) break; }
+      } else if (c.mode === 'expand') err = execStep(n, c.mode, c.tiles);
+      else for (const it of items) { err = execStep(it); if (err) break; }
+      const sig = JSON.stringify([n.kind, n.text]);
+      if (err) { why = err === 'stop' ? (n.text || 'ждать') : (err + ' — «' + (n.text || '') + '»'); break; }
+      done += items.length;
+      if (sig === lastSig && i > 50) { why = 'помощник повторяет шаг'; break; }
+      lastSig = sig;
+    }
+    if (done) { undo.push(before); if (undo.length > 80) undo.shift(); }
+    msg = (done ? '▶ выполнено шагов: ' + done + '. ' : '') + 'Остановился: ' + why;
+    changed();
+  }
+
   // ---------- сводка ----------
   function summary() {
     const cnt = {}; sim.ents.forEach((e) => { const n = (DEFS[e.cityentity_id] || {}).n; if (n && !/Препятствие|Ратуша/.test(n)) cnt[n] = (cnt[n] || 0) + 1; });
@@ -1330,8 +1399,8 @@ window.QISim = { Sim, DEFS, speedShards };
   // ---------- кнопки ----------
   $('#t1').onclick = () => skip(3600); $('#t12').onclick = () => skip(12 * 3600); $('#t10m').onclick = () => skip(600); $('#tev').onclick = nextEvent;
   $('#cm').onclick = () => collectAll('m'); $('#cs').onclick = () => collectAll('s'); $('#ca').onclick = () => collectAll('a');
-  $('#undo').onclick = doUndo;
-  const setTool = (t) => { tool = tool === t ? null : t; placing = null; moving = null; sel = null; msg = tool === 'col' ? 'Сбор: левый клик по зданию — собрать, правый клик — выход' : tool === 'dem' ? 'Снос: левый клик по зданию — снести, правый клик — выход' : ''; render(); };
+  $('#undo').onclick = doUndo; $('#auto').onclick = autoPlan;
+  const setTool = (t) => { if (moving) cancelMove(); tool = tool === t ? null : t; placing = null; moving = null; sel = null; msg = tool === 'col' ? 'Сбор: левый клик по зданию — собрать, правый клик — выход' : tool === 'dem' ? 'Снос: левый клик по зданию — снести, правый клик — выход' : ''; render(); };
   $('#tcol').onclick = () => setTool('col'); $('#tdem').onclick = () => setTool('dem');
   $('#new').onclick = () => {
     const o = defaults(); const f = (id, k) => { const v = parseFloat($(id).value); if (isFinite(v)) o[k] = v; };
