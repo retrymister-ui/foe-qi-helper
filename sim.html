@@ -9,7 +9,7 @@ header{padding:8px 12px;background:#232a33;border-bottom:1px solid #333c47;displ
 #bar{padding:6px 12px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;border-bottom:1px solid #2c343e}
 button{background:#33404f;color:#e6ecf2;border:1px solid #4a5868;border-radius:5px;padding:4px 9px;cursor:pointer;font:inherit}
 button:hover{background:#3e4e60}button:disabled{opacity:.4;cursor:default}button.on{background:#7a5a17;border-color:#c79a3a}
-main{display:grid;grid-template-columns:210px auto 1fr;gap:10px;padding:10px}
+main{display:grid;grid-template-columns:210px min-content minmax(320px,420px);gap:10px;padding:10px;justify-content:start}
 #pal{max-height:calc(100vh - 150px);overflow:auto}.pb{display:flex;justify-content:space-between;gap:6px;width:100%;margin:2px 0;text-align:left;padding:3px 6px}
 .grp{margin:8px 0 3px;color:#c9a86a;font-weight:600}
 #map{background:#141920;border:1px solid #333c47;cursor:crosshair}
@@ -28,7 +28,7 @@ details summary{cursor:pointer}
 </div>
 <main>
 <div id="pal"></div>
-<div><canvas id="map"></canvas><div class="dim">Левый клик — собрать готовое здание / выбрать здание или участок «+». <b>Shift + левый клик — ускорить</b>. <b>Ctrl + правый клик — снести</b> (или Delete для выбранного). <b>Правый клик по зданию — взять, левый клик — поставить; если на месте другое здание — оно встаёт на мышку (цепочка), Esc — вернуть всю цепочку.</b> «🧺 Сбор» / «🔨 Снос» — левый клик по зданиям, правый — выход. Esc — отмена. Ctrl+Z — отменить ход.</div></div>
+<div><canvas id="map"></canvas><div class="dim" style="width:505px">Левый клик — собрать готовое здание / выбрать здание или участок «+». <b>Shift + левый клик — ускорить</b>. <b>Ctrl + правый клик — снести</b> (или Delete для выбранного). <b>Правый клик по зданию — взять, левый клик — поставить; если на месте другое здание — оно встаёт на мышку (цепочка), Esc — вернуть всю цепочку.</b> «🧺 Сбор» / «🔨 Снос» — левый клик по зданиям, правый — выход. Esc — отмена. Ctrl+Z — отменить ход.</div></div>
 <div id="side">
 <div id="hh">Помощник…</div>
 <div id="sel"></div>
