@@ -23,7 +23,7 @@ header{padding:10px 14px 8px;border-bottom:1px solid #1f262e}
 .row{display:flex;justify-content:space-between;align-items:center;gap:8px}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
 .b{height:48px;border-radius:10px;border:1px solid #333c47;background:transparent;color:#e6ebf0;font:600 15px system-ui,sans-serif;padding:0 12px}
-.b.pri{background:#e6ebf0;color:#0e1114;border:none}.b.sp{display:flex;justify-content:space-between;align-items:center;width:100%;margin-top:8px}
+.b:disabled{opacity:.35}.b.pri{background:#e6ebf0;color:#0e1114;border:none}.b.sp{display:flex;justify-content:space-between;align-items:center;width:100%;margin-top:8px}
 nav{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid #1f262e;margin-top:8px}
 nav button{background:none;border:none;color:#a9b4c0;height:56px;font:500 13px system-ui,sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px}
 nav svg{width:22px;height:22px}
@@ -38,11 +38,11 @@ nav svg{width:22px;height:22px}
 input,textarea{height:44px;border-radius:8px;border:1px solid #333c47;background:#0e1114;color:#e6ebf0;font:600 15px system-ui,sans-serif;padding:0 10px;text-align:right;width:150px}
 textarea{width:100%;height:auto;text-align:left;font:12px monospace;padding:8px}
 .row input{width:56px;text-align:center}
-#toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:#2a333d;color:#e6ebf0;padding:10px 14px;border-radius:10px;font-size:14px;opacity:0;pointer-events:none;transition:opacity .2s;max-width:90vw;text-align:center}#toast.on{opacity:1}
+#toast{position:fixed;left:50%;top:70px;transform:translateX(-50%);background:#2a333d;color:#e6ebf0;padding:10px 14px;border-radius:10px;font-size:14px;opacity:0;pointer-events:none;transition:opacity .2s;max-width:90vw;text-align:center}#toast.on{opacity:1}
 </style></head><body>
 <header><div class="top"><b id="clock"></b><span class="dim small" id="left"></span></div><div id="res"></div></header>
 <div id="mapwrap"><canvas id="map"></canvas><button id="zoom" aria-label="Масштаб">＋</button></div>
-<div id="modebar"><span id="modetxt"></span><button class="b" id="stop" style="height:36px">Готово</button></div>
+<div id="modebar"><span id="modetxt"></span><span style="display:flex;gap:6px"><button class="b pri" id="ok" style="height:40px">✓ Поставить</button><button class="b" id="stop" style="height:40px">Готово</button></span></div>
 <section id="help"></section>
 <nav>
 <button data-tab="time"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg>Время</button>
@@ -1108,7 +1108,7 @@ window.QISim = { Sim, DEFS, speedShards };
   const UNITS = { W_GuildRaidsEarlyMiddleAge_Siegecamp: { n: 'катапульт', cm: 35000, cs: 28000 }, W_GuildRaidsLateMiddleAge_Siegecamp: { n: 'пушек', cm: 49000, cs: 42000 } };
   const SHORT = { 'Многоэтажный дом': 'М', 'Усадьба': 'У', 'Каркасный дом': 'К', 'Дом с гонтовой кровлей': 'ГК', 'Церковь': 'Ц', 'Пекарня': 'Пек', 'Лаборатория алхимика': 'Алх', 'Дом картографа': 'Крт', 'Дом лекаря': 'Лек', 'Позорный столб': 'Стб', 'Пивоварня': 'Пив', 'Канатная мастерская': 'Кан', 'Мастерская катапульт': 'Кат', 'Ратуша': 'Ратуша', 'Препятствие': '' };
 
-  let sim, opts, undo = [], diamonds = 0, army = 0, coll = { n: 0, t: 0 }, mode = 'none', placing = null, moving = null, sheet = null, zoom = 1, msg = '';
+  let ghost = null, drag = false; let sim, opts, undo = [], diamonds = 0, army = 0, coll = { n: 0, t: 0 }, mode = 'none', placing = null, moving = null, sheet = null, zoom = 1, msg = '';
   const end = () => (opts && opts.end) || T0d + SEASON, t0 = () => end() - SEASON;
   const defaults = () => ({ money: 550000, supplies: 175000, shards: 1640, extC: 0.2, extS: 0.2, end: T0d + SEASON });
 
@@ -1167,7 +1167,8 @@ window.QISim = { Sim, DEFS, speedShards };
     cx.fillStyle = '#0e1114'; cx.fillRect(0, 0, cv.width, cv.height);
     ALL_TILES.forEach((t) => {
       if (tileBlocked(t)) return;
-      if (tileOwned(t)) { cx.fillStyle = '#18241b'; cx.fillRect(px(t.x), px(t.y), 4 * CELL, 4 * CELL); }
+      if (tileOwned(t)) { cx.fillStyle = '#18241b'; cx.fillRect(px(t.x), px(t.y), 4 * CELL, 4 * CELL);
+        cx.strokeStyle = 'rgba(255,255,255,.07)'; for (let i = 0; i <= 4; i++) { cx.beginPath(); cx.moveTo(px(t.x + i) + .5, px(t.y)); cx.lineTo(px(t.x + i) + .5, px(t.y + 4)); cx.stroke(); cx.beginPath(); cx.moveTo(px(t.x), px(t.y + i) + .5); cx.lineTo(px(t.x + 4), px(t.y + i) + .5); cx.stroke(); } }
       else if (tileNear(t)) { cx.strokeStyle = '#3a4552'; cx.setLineDash([3, 3]); cx.strokeRect(px(t.x) + 1.5, px(t.y) + 1.5, 4 * CELL - 3, 4 * CELL - 3); cx.setLineDash([]); cx.fillStyle = '#5c6875'; cx.font = (CELL * 1.4) + 'px sans-serif'; cx.textAlign = 'center'; cx.fillText('+', px(t.x) + 2 * CELL, px(t.y) + 2.5 * CELL); cx.textAlign = 'left'; }
     });
     sim.ents.forEach((e) => {
@@ -1179,22 +1180,36 @@ window.QISim = { Sim, DEFS, speedShards };
     });
     if (hint) { cx.strokeStyle = '#ff9f1a'; cx.lineWidth = 2.5; cx.setLineDash([5, 3]); hint.forEach((r) => cx.strokeRect(px(r.x) + 1, px(r.y) + 1, r.w * CELL - 2, r.h * CELL - 2)); cx.setLineDash([]); cx.lineWidth = 1; }
     const g = placing || (moving && moving.cityentity_id);
-    if (g && hover) { const d = DEFS[g]; const ok = sim.fits(g, hover.x, hover.y, moving ? moving.id : undefined); cx.fillStyle = ok ? 'rgba(120,255,140,.45)' : 'rgba(255,90,90,.45)'; cx.fillRect(px(hover.x), px(hover.y), d.w * CELL, d.h * CELL); }
+    if (g && ghost) { const d = DEFS[g], ok = ghostOk(); cx.fillStyle = ok ? 'rgba(120,255,140,.5)' : 'rgba(255,90,90,.5)'; cx.fillRect(px(ghost.x), px(ghost.y), d.w * CELL, d.h * CELL);
+      cx.strokeStyle = ok ? '#8be09a' : '#ff6b6b'; cx.lineWidth = 2; cx.strokeRect(px(ghost.x) + 1, px(ghost.y) + 1, d.w * CELL - 2, d.h * CELL - 2); cx.lineWidth = 1; }
   }
   function cellOf(ev) { const r = cv.getBoundingClientRect(); return { x: MIN + Math.floor((ev.clientX - r.left) / CELL), y: MIN + Math.floor((ev.clientY - r.top) / CELL) }; }
   cv.addEventListener('click', (ev) => {
     const c = cellOf(ev), e = entAt(c.x, c.y);
-    if (placing) { hover = c; const t = placing; act(() => sim.place(t, c.x, c.y), DEFS[t].n + ' поставлен'); return; }
-    if (moving) { const m = moving; moving = null; act(() => sim.move(m.id, c.x, c.y), 'Перенесено'); return; }
+    if (placing || moving) { if (dragMoved) { dragMoved = false; return; } const g = placing || moving.cityentity_id, d = DEFS[g], nx = c.x - Math.floor((d.w - 1) / 2), ny = c.y - Math.floor((d.h - 1) / 2);
+      if (ghost && c.x >= ghost.x && c.x < ghost.x + d.w && c.y >= ghost.y && c.y < ghost.y + d.h) { confirmGhost(); return; }   // тап по тени — поставить
+      ghost = { x: nx, y: ny }; render(); return; }
     if (e && mode === 'dem') { const d = DEFS[e.cityentity_id] || {}; if (e.cityentity_id.startsWith('H_')) return toast('Ратушу не снести'); act(() => { if (sim.ready(e) && d.m) sim.collect(e.id); return e.cityentity_id.startsWith('I_') ? (pay(sim.impCost), sim.removeImpediment(e.id)) : sim.demolish(e.id); }, 'Снесено: ' + d.n); return; }
     if (e && mode === 'col') { act(() => sim.collect(e.id), 'Собрано'); return; }
     if (e && mode === 'spd') { act(() => speed(e), 'Ускорено'); return; }
-    if (e && mode === 'mov') { if (e.cityentity_id.startsWith('I_')) return; moving = e; toast('Тапните новое место (левый верхний угол)'); draw(); return; }
+    if (e && mode === 'mov') { if (e.cityentity_id.startsWith('I_')) return; moving = e; ghost = { x: e.x, y: e.y }; toast('Тяните тень пальцем или тапните новое место, потом ✓'); render(); return; }
     if (e) { openEnt(e); return; }
     const t = ALL_TILES.find((t) => c.x >= t.x && c.x < t.x + 4 && c.y >= t.y && c.y < t.y + 4);
     if (t && !tileOwned(t) && !tileBlocked(t) && tileNear(t)) openTile(t);
   });
-  cv.addEventListener('pointermove', (ev) => { if (placing || moving) { hover = cellOf(ev); draw(); } });
+  // тень: тап — поставить тень (центром под пальцем), тап по тени или «✓ Поставить» — подтвердить; тень можно тянуть пальцем
+  function ghostOk() { const g = placing || (moving && moving.cityentity_id); return !!(g && ghost && sim.fits(g, ghost.x, ghost.y, moving ? moving.id : undefined)); }
+  function confirmGhost() {
+    if (!ghost) return toast('Тапните место на карте');
+    const gh = ghost; ghost = null;
+    if (placing) { const t = placing; act(() => sim.place(t, gh.x, gh.y), DEFS[t].n + ' поставлен — можно ставить ещё'); }
+    else if (moving) { const m = moving; moving = null; act(() => sim.move(m.id, gh.x, gh.y), 'Перенесено'); }
+  }
+  let dragMoved = false, dragStart = null;
+  cv.addEventListener('pointerdown', (ev) => { if (!(placing || moving) || !ghost) return; const c = cellOf(ev), g = placing || moving.cityentity_id, d = DEFS[g];
+    if (c.x >= ghost.x && c.x < ghost.x + d.w && c.y >= ghost.y && c.y < ghost.y + d.h) { drag = true; dragStart = { cx: c.x, cy: c.y, gx: ghost.x, gy: ghost.y }; cv.setPointerCapture(ev.pointerId); } });
+  cv.addEventListener('pointermove', (ev) => { if (!drag) return; const c = cellOf(ev); const nx = dragStart.gx + c.x - dragStart.cx, ny = dragStart.gy + c.y - dragStart.cy; if (nx !== ghost.x || ny !== ghost.y) { ghost = { x: nx, y: ny }; dragMoved = true; draw(); } });
+  cv.addEventListener('pointerup', () => { if (drag) { drag = false; if (dragMoved) render(); } });
 
   // ---------- нижние листы ----------
   function openSheet(html, bind) { sheet = true; $('#sheet').innerHTML = '<div class="grab"></div>' + html; $('#sheet').classList.add('on'); $('#veil').classList.add('on'); bind && bind($('#sheet')); }
@@ -1222,7 +1237,7 @@ window.QISim = { Sim, DEFS, speedShards };
           return null; }, 'Сохранено');
         if (a === 'spd') act(() => speed(e), 'Ускорено');
         if (a === 'dem') act(() => { if (sim.ready(e) && d.m) sim.collect(e.id); return sim.demolish(e.id); }, 'Снесено');
-        if (a === 'mov') { moving = e; toast('Тапните новое место (левый верхний угол)'); }
+        if (a === 'mov') { moving = e; ghost = { x: e.x, y: e.y }; toast('Тяните тень пальцем или тапните новое место, потом ✓'); render(); }
         if (a === 'imp') act(() => { pay(sim.impCost); return sim.removeImpediment(e.id); }, 'Убрано');
         if (a === 'army') act(() => { const u = UNITS[e.cityentity_id], R = sim.res; if (R.guild_raids_money < u.cm || R.guild_raids_supplies < u.cs) return 'не хватает ресурсов'; R.guild_raids_money -= u.cm; R.guild_raids_supplies -= u.cs; army += 10; return null; }, '+10 ' + UNITS[e.cityentity_id].n);
         if (a === 'rope') act(() => sim.ropes(1), '+20 верёвок');
@@ -1317,7 +1332,7 @@ window.QISim = { Sim, DEFS, speedShards };
       '<div class="list">' + list.map(([k, d]) => '<button data-t="' + k + '" class="li' + (placing === k ? ' on' : '') + '"><span>' + d.n + '</span><span class="dim">' + d.w + '×' + d.h + ' · ' + short(d.cm || 0) + (d.cc ? ' · ' + d.cc + 'х' : '') + '</span></button>').join('') + '</div>', (s) => {
       s.querySelectorAll('[data-k]').forEach((b) => b.onclick = () => { mode = b.dataset.k; placing = null; moving = null; closeSheet(); render(); toast(b.textContent + (mode === 'none' ? '' : ': тапайте по зданиям')); });
       s.querySelectorAll('[data-c]').forEach((b) => b.onclick = () => { palCat = b.dataset.c; tabEdit(); });
-      s.querySelectorAll('[data-t]').forEach((b) => b.onclick = () => { placing = b.dataset.t; mode = 'none'; closeSheet(); render(); toast('Тапайте по клеткам — ставить ' + DEFS[placing].n + ' (левый верхний угол)'); });
+      s.querySelectorAll('[data-t]').forEach((b) => b.onclick = () => { placing = b.dataset.t; ghost = null; mode = 'none'; closeSheet(); render(); toast('Тапните место на карте — появится тень, потом ✓ Поставить'); });
     });
   }
   function tabData() {
@@ -1342,7 +1357,8 @@ window.QISim = { Sim, DEFS, speedShards };
   document.querySelectorAll('nav button').forEach((b) => b.onclick = () => ({ time: tabTime, edit: tabEdit, data: tabData, undo: doUndo })[b.dataset.tab]());
   function doUndo() { const s = undo.pop(); if (!s) return toast('Отменять нечего'); restore(s); placing = null; moving = null; changed(); toast('Отменено'); }
   $('#zoom').onclick = () => { zoom = zoom === 1 ? 2 : 1; $('#zoom').textContent = zoom === 1 ? '＋' : '－'; sizeMap(); draw(); };
-  $('#stop').onclick = () => { placing = null; moving = null; mode = 'none'; render(); };
+  $('#stop').onclick = () => { placing = null; moving = null; ghost = null; mode = 'none'; render(); };
+  $('#ok').onclick = confirmGhost;
 
   let tt = null; function toast(t) { const el = $('#toast'); el.textContent = t; el.classList.add('on'); clearTimeout(tt); tt = setTimeout(() => el.classList.remove('on'), 2600); }
 
@@ -1353,7 +1369,7 @@ window.QISim = { Sim, DEFS, speedShards };
     $('#res').innerHTML = [['Монеты', short(R.guild_raids_money)], ['Молотки', short(R.guild_raids_supplies)], ['Хроно', fmt(R.guild_raids_chrono_alloy)], ['Осколки', fmt(R.guild_raids_currency)], ['Эйфория', isFinite(st.ratio) ? Math.round(st.ratio * 100) + '%' : '—']]
       .map(([k, v]) => '<div><span class="dim">' + k + '</span><b>' + v + '</b></div>').join('');
     const busy = placing || moving || mode !== 'none';
-    $('#modebar').style.display = busy ? 'flex' : 'none';
+    $('#modebar').style.display = busy ? 'flex' : 'none'; $('#ok').style.display = placing || moving ? '' : 'none'; $('#ok').disabled = !ghostOk(); cv.style.touchAction = placing || moving ? 'none' : 'manipulation';
     $('#modetxt').textContent = placing ? 'Ставим: ' + DEFS[placing].n : moving ? 'Перенос: ' + DEFS[moving.cityentity_id].n : ({ mov: 'Режим: перенос', dem: 'Режим: снос', col: 'Режим: сбор', spd: 'Режим: ускорение' })[mode] || '';
     readHelper(); draw();
   }
