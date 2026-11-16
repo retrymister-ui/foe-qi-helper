@@ -1220,7 +1220,8 @@ window.QISim = { Sim, DEFS, speedShards };
     const d = DEFS[e.cityentity_id] || {}, st = e.state && e.state.__class__, th = e.cityentity_id.startsWith('H_'), imp = e.cityentity_id.startsWith('I_');
     const cur = st === 'ConstructionState' ? 0 : st === 'ProducingState' ? 1 : st === 'ProductionFinishedState' ? 2 : 1;
     const L = leftOf(e), sp = QISim.speedShards(d, sim.built(e));
-    openSheet('<div class="row"><b class="big">' + (d.n || '?') + '</b><span class="dim">' + d.w + '×' + d.h + (d.m ? ' · монеты ' + short(d.m) : '') + (d.s ? ' · молотки ' + short(d.s) : '') + '</span></div>' +
+    const stt = sim.stats(); openSheet('<div class="row"><b class="big">' + (d.n || '?') + '</b><span class="dim">' + d.w + '×' + d.h + '</span></div>' +
+      (d.m || d.s || d.c ? '<div class="small">Сбор сейчас (×' + stt.mf + '): ' + [d.m && '<b>' + short(d.m * stt.coinMul) + '</b> монет', d.s && '<b>' + short(d.s * ((d.pop || 0) < 0 ? stt.supMul : 1)) + '</b> молотков', d.c && '<b>' + fmt(Math.round(d.c * stt.mf)) + '</b> хроно'].filter(Boolean).join(', ') + '<span class="dim"> · база ' + [d.m && short(d.m), d.s && short(d.s), d.c && d.c + 'х'].filter(Boolean).join(' / ') + '</span></div>' : '') +
       (imp ? '<button class="b pri" data-a="imp">Убрать за ' + sim.impCost + ' осколков</button>' :
       '<div class="seg" data-g="st">' + ['Строится', 'Производит', 'Готово'].map((n, i) => '<button data-i="' + i + '" class="' + (i === cur ? 'on' : '') + '">' + n + '</button>').join('') + '</div>' +
       '<div class="row"><span class="dim">Осталось</span><span><input id="lh" inputmode="numeric" value="' + Math.floor(L / 3600) + '"> ч <input id="lm" inputmode="numeric" value="' + Math.floor((L % 3600) / 60) + '"> мин</span></div>' +

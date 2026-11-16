@@ -1341,7 +1341,8 @@ window.QISim = { Sim, DEFS, speedShards };
     if (UNITS[e.cityentity_id] && sim.built(e)) { const u = UNITS[e.cityentity_id]; b.push('<button id="b-cat">Купить армию: 10 ' + u.n + ' (' + fmt(u.cm) + ' мон. + ' + fmt(u.cs) + ' мол.)</button>'); }
     if (imp) b.push('<button id="b-imp">Убрать за ' + sim.impCost + ' осколков</button>');
     box.innerHTML = '<b>' + (d.n || e.cityentity_id) + '</b> <span class="dim">#' + e.id + ' (' + e.x + ',' + e.y + ')</span><div>' + stTxt + '</div>' +
-      '<div class="dim">' + [d.pop && 'жители ' + d.pop, d.eu && 'эйфория ' + d.eu, d.m && 'монеты ' + fmt(d.m), d.s && 'молотки ' + fmt(d.s), d.c && 'хроно ' + d.c, d.bm && 'бонус монет +' + d.bm * 100 + '%', d.bs && 'бонус молотков +' + d.bs * 100 + '%'].filter(Boolean).join(', ') + '</div><div class="btns">' + b.join('') + '</div>';
+      (d.m || d.s || d.c ? (() => { const st = sim.stats(); return '<div>Сбор сейчас (эйфория ×' + st.mf + '): ' + [d.m && '<b>' + fmt(d.m * st.coinMul) + '</b> монет', d.s && '<b>' + fmt(d.s * ((d.pop || 0) < 0 ? st.supMul : 1)) + '</b> молотков', d.c && '<b>' + fmt(Math.round(d.c * st.mf)) + '</b> хроно'].filter(Boolean).join(', ') + '</div>'; })() : '') +
+      '<div class="dim">База: ' + [d.pop && 'жители ' + d.pop, d.eu && 'эйфория ' + d.eu, d.m && 'монеты ' + fmt(d.m), d.s && 'молотки ' + fmt(d.s), d.c && 'хроно ' + d.c, d.bm && 'бонус монет +' + d.bm * 100 + '%', d.bs && 'бонус молотков +' + d.bs * 100 + '%'].filter(Boolean).join(', ') + '</div><div class="btns">' + b.join('') + '</div>';
     on('#b-col', () => (/Catapult|Siege/i.test(e.cityentity_id) ? 'нечего' : sim.collect(e.id)), 'Собрано');
     on('#b-dem', () => { if (sim.ready(e) && d.m) sim.collect(e.id); const r = sim.demolish(e.id); if (!r) sel = null; return r; }, 'Снесено');
     const mv = $('#b-mov'); if (mv) mv.addEventListener('click', () => { pickUp(e); render(); });
