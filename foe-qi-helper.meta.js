@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FoE КВ помощник
 // @namespace    foe-qi-helper
-// @version      2.35
+// @version      2.36
 // @description  Помощник для Квантовых вторжений: следит за поселением по данным игры и подсказывает шаги сбора (церкви, снос). Сам ничего не нажимает.
 // @match        https://*.forgeofempires.com/game
 // @match        https://*.forgeofempires.com/game?*
