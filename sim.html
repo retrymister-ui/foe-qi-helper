@@ -1388,7 +1388,7 @@ window.QISim = { Sim, DEFS, speedShards };
     if (k === 'relocate' || k === 'move') return to ? sim.move(id, to.x, to.y) : 'нет места';
     if (k === 'speed') { const e = sim.ents.get(id); return e ? speed(e) : 'нет здания'; }
     if (k === 'imp') return payShards(sim.impCost) || sim.removeImpediment(id);
-    if (k === 'gexpand' && n.tile) return sim.expand(n.tile.x, n.tile.y, true);
+    if (k === 'gexpand' && n.tile) { if (n.goods === false) { const r = payShards(sim.expCosts[0] || 0); if (r) return r; } return sim.expand(n.tile.x, n.tile.y, n.goods !== false); }
     if (k === 'produce') { const e = sim.ents.get(id); if (e && /Ropery/.test(e.cityentity_id)) return sim.ropes(1); if (e && UNITS[e.cityentity_id]) return buyArmy(e); return 'stop'; }
     if (k === 'collect' && id != null) { const e = sim.ents.get(id); if (e && /Catapult|Siege/i.test(e.cityentity_id) && sim.ready(e)) { army += 10; e.state = { __class__: 'IdleState' }; return null; } return sim.collect(id); }
     if (k === 'collect' && /дома|все ресурсы|монеты|молотки/.test(txt) && !/Ждите/.test(txt)) {
